@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">temp</string>
+    <!-- Stream Chat API key. This is your original API key. -->
+    <string name="stream_api_key">zrqhgvpgnjrc</string>
+    <!-- Base URL for your token server. 10.0.2.2 points to host machine from Android emulator. -->
+    <string name="backend_base_url">https://temp-backend-s7kk.onrender.com</string>
+    <!-- Supabase configuration -->
+    <string name="supabase_url">https://feaogryvepuxojbiwxux.supabase.co</string>
+    <string name="supabase_anon_key">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlYW9ncnl2ZXB1eG9qYml3eHV4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE1ODg5MTksImV4cCI6MjA3NzE2NDkxOX0.xwWsUrucIjIt7v1LR4D_L6LlSx4JTRpy7v2cfqTWId0</string>
+</resources>

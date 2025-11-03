@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "942362619846",
+    "project_id": "temp-7470b",
+    "storage_bucket": "temp-7470b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:942362619846:android:5c57f371753232bdd14cc7",
+        "android_client_info": {
+          "package_name": "com.example.temp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmIr9ufJZ49q4sG4mjCI0fs0FDBLBHAs8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
