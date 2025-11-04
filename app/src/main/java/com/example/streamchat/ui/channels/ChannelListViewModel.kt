@@ -86,7 +86,7 @@ class ChannelListViewModel(
 
             try {
                 val currentUserId = chatClient.getCurrentUser()?.id ?: return@launch
-                
+
                 val filter = if (query.isBlank()) {
                     Filters.and(
                         Filters.eq("type", "messaging"),
@@ -107,6 +107,7 @@ class ChannelListViewModel(
                 ).apply {
                     watch = true
                     state = true
+                    messageLimit=1
                 }
 
                 val result = chatClient.queryChannels(request).await()
@@ -130,55 +131,55 @@ class ChannelListViewModel(
         _searchQuery.value = query
         loadChannels(query)
     }
-    
-    fun createChannel(memberIds: List<String>, groupName: String? = null) {
-        viewModelScope.launch {
-            try {
-                val currentUserId = chatClient.getCurrentUser()?.id ?: return@launch
-                val allMemberIds = (memberIds + currentUserId).distinct()
-                
-                // Decide channel id strategy:
-                // - For 1:1 chats, use deterministic id from member ids to avoid duplicates
-                // - For group chats (2+ others), use a random id to allow multiple groups with same members
-                val channelId = if (allMemberIds.size <= 2) {
-                    allMemberIds.sorted().joinToString("-")
-                } else {
-                    java.util.UUID.randomUUID().toString()
-                }
 
-                // Preflight: ensure all selected members exist
-                val missing = findMissingUsers(allMemberIds - currentUserId)
-                if (missing.isNotEmpty()) {
-                    _uiState.value = ChannelListUiState.Error(
-                        "Cannot create channel. These users don't exist yet: ${missing.joinToString(", ")}. Ask them to log in once or create them in your Stream Dashboard."
-                    )
-                    return@launch
-                }
-                val extraData = buildMap<String, Any> {
-                    val name = groupName?.trim().orEmpty()
-                    if (name.isNotEmpty()) put("name", name)
-                }
-
-                val result = chatClient.createChannel(
-                    channelType = "messaging",
-                    channelId = channelId,
-                    memberIds = allMemberIds,
-                    extraData = extraData
-                ).await()
-                
-                if (result.isSuccess) {
-                    // Reload channels to show the new one
-                    loadChannels()
-                    // Also refresh the available users list in case new users appeared
-                    refreshAvailableUsers()
-                } else {
-                    _uiState.value = ChannelListUiState.Error(result.errorOrNull()?.message ?: "Failed to create channel")
-                }
-            } catch (e: Exception) {
-                _uiState.value = ChannelListUiState.Error(e.message ?: "Unknown error")
+    suspend fun createChannel(memberIds: List<String>, groupName: String? = null): String? {
+        try {
+            val currentUserId = chatClient.getCurrentUser()?.id
+            if (currentUserId == null) {
+                android.util.Log.e("CreateGroup", "❌ No current user connected.")
+                _uiState.value = ChannelListUiState.Error("No user connected.")
+                return null
             }
+
+            val allMemberIds = (memberIds + currentUserId).distinct()
+            val channelId = if (allMemberIds.size <= 2) {
+                allMemberIds.sorted().joinToString("-")
+            } else {
+                java.util.UUID.randomUUID().toString()
+            }
+
+            android.util.Log.d("CreateGroup", "Creating channel with ID: $channelId, Members: $allMemberIds")
+
+            val extraData = buildMap<String, Any> {
+                val name = groupName?.trim().orEmpty()
+                if (name.isNotEmpty()) put("name", name)
+            }
+
+            val result = chatClient.createChannel(
+                channelType = "messaging",
+                channelId = channelId,
+                memberIds = allMemberIds,
+                extraData = extraData
+            ).await()
+
+            return if (result.isSuccess) {
+                val cid = result.getOrThrow().cid
+                android.util.Log.d("CreateGroup", "✅ Channel created successfully: $cid")
+                loadChannels()
+                cid
+            } else {
+                val msg = result.errorOrNull()?.message ?: "Unknown error"
+                android.util.Log.e("CreateGroup", "❌ Channel creation failed: $msg")
+                _uiState.value = ChannelListUiState.Error(msg)
+                null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CreateGroup", "⚠️ Exception while creating channel", e)
+            _uiState.value = ChannelListUiState.Error(e.message ?: "Error creating channel")
+            return null
         }
     }
+
 
     fun refreshAvailableUsers() {
         viewModelScope.launch {

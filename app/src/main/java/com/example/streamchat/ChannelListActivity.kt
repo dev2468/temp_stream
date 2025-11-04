@@ -1,43 +1,53 @@
 package com.example.streamchat
 
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
+import android.util.Log
+import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.fontResource
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.runtime.livedata.observeAsState
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import coil.compose.AsyncImage
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.ViewModelFactory
+
+// <--- IMPORTANT: these imports reference the ViewModel and UI state in your repo --->
 import com.example.streamchat.ui.channels.ChannelListUiState
 import com.example.streamchat.ui.channels.ChannelListViewModel
-import com.google.android.material.appbar.MaterialToolbar
+
 import io.getstream.chat.android.client.ChatClient
-import io.getstream.chat.android.compose.ui.theme.ChatTheme
 import io.getstream.chat.android.models.Channel
 import io.getstream.chat.android.models.User
-import java.text.SimpleDateFormat
-import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class ChannelListActivity : AppCompatActivity() {
 
@@ -47,218 +57,114 @@ class ChannelListActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_channel_list)
 
-        // Setup toolbar
-        findViewById<MaterialToolbar>(R.id.toolbar).apply {
-            setSupportActionBar(this)
-        }
+        // ✅ Make layout draw edge-to-edge
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Setup search bar
-        findViewById<androidx.appcompat.widget.SearchView>(R.id.searchBar).apply {
-            setOnQueryTextListener(object : androidx.appcompat.widget.SearchView.OnQueryTextListener {
-                override fun onQueryTextSubmit(query: String?): Boolean = false
-                override fun onQueryTextChange(newText: String?): Boolean {
-                    viewModel.onSearchQueryChanged(newText ?: "")
-                    return true
-                }
-            })
-        }
+        // ✅ Force white status & navigation bars (always white, even in dark mode)
+        window.statusBarColor = Color.White.toArgb()
+        window.navigationBarColor = Color.White.toArgb()
 
-        findViewById<ComposeView>(R.id.composeView).setContent {
-            ChatTheme {
-                val uiState by viewModel.uiStateLiveData.observeAsState(ChannelListUiState.Loading)
-                val availableUsers by viewModel.availableUsersLiveData.observeAsState(emptyList())
-                var showCreateChannelDialog by remember { mutableStateOf(false) }
+        // ✅ Make system bar icons dark for visibility (battery, clock, etc.)
+        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = true
+        insetsController.isAppearanceLightNavigationBars = true
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ChannelListContent(
-                        uiState = uiState,
-                        onChannelClick = { channel ->
-                            startActivity(
-                                MessageListActivity.createIntent(
-                                    this@ChannelListActivity,
-                                    channel.cid,
-                                    channel.name
-                                )
-                            )
-                        }
-                    )
-
-                    // Floating Action Button
-                    FloatingActionButton(
-                        onClick = { showCreateChannelDialog = true },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(16.dp),
-                        containerColor = Color(0xFF005FFF)
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "Create Channel",
-                            tint = Color.White
-                        )
-                    }
-
-                    if (showCreateChannelDialog) {
-                        CreateChannelDialog(
-                            onDismiss = { showCreateChannelDialog = false },
-                            availableUsers = availableUsers,
-                            onCreateChannel = { memberIds, groupName ->
-                                viewModel.createChannel(memberIds, groupName)
-                                showCreateChannelDialog = false
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
-        menuInflater.inflate(R.menu.menu_channel_list, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_logout -> {
-                ChatClient.instance().disconnect(flushPersistence = true).enqueue()
-                ChatRepository.getInstance(applicationContext).clearSession()
-                startActivity(Intent(this, LoginActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                })
-                finish()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
-    }
-
-    companion object {
-        fun createIntent(context: Context): Intent {
-            return Intent(context, ChannelListActivity::class.java)
-        }
-    }
-}
-
-@Composable
-fun ChannelListContent(
-    uiState: ChannelListUiState,
-    onChannelClick: (Channel) -> Unit
-) {
-    when (uiState) {
-        is ChannelListUiState.Loading -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        }
-        is ChannelListUiState.Empty -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Chat, null, Modifier.size(64.dp), tint = Color.Gray)
-                    Spacer(Modifier.height(16.dp))
-                    Text("No channels yet", color = Color.Gray)
-                }
-            }
-        }
-        is ChannelListUiState.Success -> {
-            LazyColumn(
+        setContent {
+            // ✅ Keep background white to blend seamlessly into status bar
+            Surface(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                color = Color.White
             ) {
-                items(uiState.channels) { channel ->
-                    ChannelItem(
-                        channel = channel,
-                        currentUserId = ChatClient.instance().getCurrentUser()?.id ?: "",
-                        onClick = { onChannelClick(channel) }
-                    )
-                }
-            }
-        }
-        is ChannelListUiState.Error -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(uiState.message, color = MaterialTheme.colorScheme.error)
-            }
-        }
-    }
-}
-
-@Composable
-fun ChannelItem(channel: Channel, currentUserId: String, onClick: () -> Unit) {
-    val lastMessage = channel.messages.lastOrNull()
-    val unreadCount = channel.unreadCount ?: 0
-    val channelName = channel.name.ifEmpty {
-        channel.members.filter { it.user.id != currentUserId }
-            .joinToString(", ") { it.user.name }.ifEmpty { "Unnamed Channel" }
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (unreadCount > 0) Color(0xFFF0F8FF) else Color.White
-        ),
-        elevation = CardDefaults.cardElevation(2.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.size(56.dp).clip(CircleShape).background(Color(0xFF005FFF)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    channelName.take(1).uppercase(),
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
+                ChannelListScreen(
+                    viewModel = viewModel,
+                    onChannelClick = { channel ->
+                        val cid = channel.cid
+                        if (!cid.isNullOrBlank()) {
+                            startActivity(MessageListActivity.createIntent(this, cid, channel.name ?: ""))
+                        } else {
+                            Log.e("ChannelListActivity", "Channel cid is null for channel: $channel")
+                        }
+                    },
+                    onAddClick = {
+                        startActivity(Intent(this, FriendListActivity::class.java))
+                    }
                 )
             }
+        }
+    }
 
-            Spacer(Modifier.width(12.dp))
+}
 
-            Column(Modifier.weight(1f)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        channelName,
-                        fontWeight = if (unreadCount > 0) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    lastMessage?.createdAt?.let {
-                        Text(
-                            formatTime(it),
-                            fontSize = 12.sp,
-                            color = if (unreadCount > 0) Color(0xFF005FFF) else Color.Gray
-                        )
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChannelListScreen(
+    viewModel: ChannelListViewModel,
+    onChannelClick: (Channel) -> Unit,
+    onAddClick: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    var selectedFilter by remember { mutableStateOf("All") }
+    val filters = listOf("All", "Unread", "Groups", "DMs")
+
+    // load channels if needed (ViewModel already does this in init, but safe to refresh)
+    LaunchedEffect(Unit) {
+        // no-op here, ViewModel already loads channels from init
+    }
+
+    // Font resource - make sure res/font/coda_caption.ttf exists
+    val coda = FontFamily(Font(resId = R.font.coda_extrabold))
+
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .systemBarsPadding(),
+        topBar = {
+            Column {
+                TopBarTitle(coda)
+                FilterRow(filters = filters, selected = selectedFilter, onSelected = { selectedFilter = it })
+            }
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onAddClick, containerColor = Color(0xFF0F52BA)) {
+                Icon(Icons.Default.Add, contentDescription = "New chat", tint = MaterialTheme.colorScheme.onPrimary)
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+        ) {
+            when (uiState) {
+                is ChannelListUiState.Loading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color(0xFF0F52BA))
                     }
                 }
+                is ChannelListUiState.Error -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(text = (uiState as ChannelListUiState.Error).message, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                is ChannelListUiState.Empty -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(text = "No chats yet — start a new one!", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                is ChannelListUiState.Success -> {
+                    val allChannels = (uiState as ChannelListUiState.Success).channels
+                    val filtered = when (selectedFilter) {
+                        "Unread" -> allChannels.filter { (it.extraData["unread_count"] as? Int ?: 0) > 0 }
+                        "Groups" -> allChannels.filter { it.memberCount > 2 }
+                        "DMs" -> allChannels.filter { it.memberCount <= 2 }
+                        else -> allChannels
+                    }
 
-                Spacer(Modifier.height(4.dp))
-
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        lastMessage?.text ?: "No messages yet",
-                        fontSize = 14.sp,
-                        color = Color.Gray,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (unreadCount > 0) {
-                        Badge(containerColor = Color(0xFF005FFF)) {
-                            Text(
-                                if (unreadCount > 99) "99+" else unreadCount.toString(),
-                                color = Color.White,
-                                fontSize = 12.sp
-                            )
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(filtered) { channel ->
+                            ChannelRow(channel = channel, onClick = { onChannelClick(channel) }, coda)
+                            Divider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
                         }
                     }
                 }
@@ -267,88 +173,137 @@ fun ChannelItem(channel: Channel, currentUserId: String, onClick: () -> Unit) {
     }
 }
 
-fun formatTime(date: Date): String {
-    val now = Calendar.getInstance()
-    val messageTime = Calendar.getInstance().apply { time = date }
-    return when {
-        now.get(Calendar.DAY_OF_YEAR) == messageTime.get(Calendar.DAY_OF_YEAR) ->
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
-        now.get(Calendar.WEEK_OF_YEAR) == messageTime.get(Calendar.WEEK_OF_YEAR) ->
-            SimpleDateFormat("EEE", Locale.getDefault()).format(date)
-        else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(date)
+@Composable
+fun TopBarTitle(coda: FontFamily) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White)
+            .statusBarsPadding() // ✅ pushes text below system bar height
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = "Chats",
+            fontFamily = coda,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 34.sp,
+            color = Color.Black, // matches light theme
+            modifier = Modifier.align(Alignment.CenterStart)
+        )
     }
 }
 
 @Composable
-fun CreateChannelDialog(
-    onDismiss: () -> Unit,
-    availableUsers: List<User>,
-    onCreateChannel: (List<String>, String?) -> Unit
-) {
-    var selectedUsers by remember { mutableStateOf(setOf<String>()) }
-    var groupName by remember { mutableStateOf("") }
-    val entries = availableUsers.map { it.id to (it.name.takeIf { n -> n.isNotBlank() } ?: it.id) }
+fun FilterRow(filters: List<String>, selected: String, onSelected: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        filters.forEach { f ->
+            val isSelected = f == selected
+            val bg by animateColorAsState(if (isSelected) Color(0xFF0F52BA) else MaterialTheme.colorScheme.surface)
+            val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Create New Channel") },
-        text = {
-            Column {
-                Text(
-                    "Select users to chat with:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                OutlinedTextField(
-                    value = groupName,
-                    onValueChange = { groupName = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Group name (optional)") }
-                )
-                Spacer(Modifier.height(8.dp))
-
-                if (entries.isEmpty()) {
-                    Text(
-                        "No other users exist yet in this app. Ask a teammate to log in once or create users in the Stream Dashboard.",
-                        color = Color.Gray
-                    )
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = bg,
+                tonalElevation = if (isSelected) 4.dp else 0.dp,
+                modifier = Modifier
+                    .height(36.dp)
+                    .wrapContentWidth()
+                    .clickable { onSelected(f) }
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Text(text = f, color = contentColor, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                 }
-                entries.forEach { (userId, userName) ->
-                    Row(
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelRow(channel: Channel, onClick: () -> Unit, coda: FontFamily) {
+    val currentUserId = ChatClient.instance().getCurrentUser()?.id
+    val isGroup = channel.memberCount > 2
+
+    val otherMember = channel.members.firstOrNull { it.user.id != currentUserId }?.user
+    val displayName = when {
+        isGroup -> channel.name.ifEmpty { "Unnamed Group" }
+        !otherMember?.name.isNullOrBlank() -> otherMember!!.name
+        !otherMember?.id.isNullOrBlank() -> otherMember!!.id
+        else -> "Unknown"
+    }
+    val avatarUrl: String? = if (isGroup) channel.image else otherMember?.image
+
+    // Last message text: try extraData["last_message"] (safe) else fallback
+    val lastMessageText = channel.messages.lastOrNull()?.text ?: "No messages yet"
+
+    // Last message time: use lastMessageAt if present
+    val lastMessageTime = channel.lastMessageAt?.let { ts ->
+        try {
+            val instant = Instant.ofEpochMilli(ts.time)
+            DateTimeFormatter.ofPattern("hh:mm", Locale.getDefault())
+                .withZone(ZoneId.systemDefault())
+                .format(instant)
+        } catch (_: Exception) { "" }
+    } ?: ""
+
+    // unread badge if provided in extraData
+    val unreadCount = (channel.extraData["unread_count"] as? Int) ?: 0
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(
+            model = avatarUrl,
+            contentDescription = "avatar",
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(displayName, fontFamily = coda, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                if (lastMessageTime.isNotEmpty()) {
+                    Text(lastMessageTime, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = lastMessageText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (unreadCount > 0) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF0F52BA),
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedUsers = if (userId in selectedUsers) {
-                                    selectedUsers - userId
-                                } else {
-                                    selectedUsers + userId
-                                }
-                            }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(start = 8.dp)
+                            .size(22.dp)
                     ) {
-                        Checkbox(
-                            checked = userId in selectedUsers,
-                            onCheckedChange = null
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(userName)
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(text = unreadCount.coerceAtMost(99).toString(), color = MaterialTheme.colorScheme.onPrimary, fontSize = 12.sp)
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onCreateChannel(selectedUsers.toList(), groupName.ifBlank { null }) },
-                enabled = selectedUsers.isNotEmpty()
-            ) {
-                Text("Create")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
         }
-    )
+    }
 }

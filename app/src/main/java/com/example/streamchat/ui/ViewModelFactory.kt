@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.auth.FirebaseAuthViewModel
 import com.example.streamchat.ui.channels.ChannelListViewModel
+import com.example.streamchat.ui.friends.FriendListViewModel
 import com.example.streamchat.ui.login.LoginViewModel
 import com.example.streamchat.ui.messages.MessageListViewModel
 import io.getstream.chat.android.client.ChatClient
@@ -31,8 +32,11 @@ class ViewModelFactory(
             }
             modelClass.isAssignableFrom(MessageListViewModel::class.java) -> {
                 require(channelId != null) { "channelId is required for MessageListViewModel" }
-                require(context != null) { "context is required for MessageListViewModel" }
+                require(context != null) { "context is required for MessageListListViewModel" }
                 MessageListViewModel(chatClient, channelId, context) as T
+            }
+            modelClass.isAssignableFrom(FriendListViewModel::class.java) -> {
+                FriendListViewModel(chatClient) as T
             }
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }

@@ -40,10 +40,19 @@ class ChatApplication : Application() {
     private fun reconnectUserIfNeeded() {
         val repository = ChatRepository.getInstance(applicationContext)
         val user = repository.getCurrentUser()
-        val tokenProvider = repository.getTokenProvider()
-        
-        if (user != null && tokenProvider != null) {
-            ChatClient.instance().connectUser(user, tokenProvider).enqueue()
+        val token = repository.getToken()
+
+        if (user != null && !token.isNullOrBlank()) {
+            ChatClient.instance().connectUser(user, token).enqueue { result ->
+                if (result.isSuccess) {
+                    android.util.Log.d("ChatApp", "✅ Reconnected saved user: ${user.id}")
+                } else {
+                    android.util.Log.e("ChatApp", "❌ Failed to reconnect: ${result.errorOrNull()?.message}")
+                    repository.clearSession()
+                }
+            }
+        } else {
+            android.util.Log.d("ChatApp", "ℹ️ No saved user session found.")
         }
     }
 }

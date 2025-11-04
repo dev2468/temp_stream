@@ -38,6 +38,8 @@
             android:name=".LoginActivity"
             android:exported="false" />
 
+        <activity android:name="com.example.streamchat.CreateGroupActivity"
+            android:exported="false" />
         <activity
             android:name=".FirebaseAuthActivity"
             android:exported="false" />
@@ -48,6 +50,9 @@
             android:name=".MessageListActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".FriendListActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

@@ -41,16 +41,12 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 }
-
 dependencies {
-    // Stream Chat SDK - Core Libraries
-    implementation(libs.stream.chat.client)
-    implementation(libs.stream.chat.state)
-    implementation(libs.stream.chat.offline)
-
-    // Stream Chat SDK - UI Components
-    implementation(libs.stream.chat.ui.components)
-    implementation(libs.stream.chat.compose)
+    // Stream Chat SDK
+    implementation("io.getstream:stream-chat-android-client:6.0.0")
+    implementation("io.getstream:stream-chat-android-state:6.0.0")
+    implementation("io.getstream:stream-chat-android-offline:6.0.0")
+    implementation("io.getstream:stream-chat-android-compose:6.0.0")
 
     // Compose
     implementation("androidx.activity:activity-compose:1.9.0")
@@ -65,14 +61,16 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
-    // LiveData (Flow <-> LiveData bridges)
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
-    // Coil for image loading
+    // Coil (image loading)
     implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // Kotlin datetime (optional, for message timestamps)
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
 
     // Core Android
     implementation(libs.appcompat)
@@ -80,16 +78,17 @@ dependencies {
     implementation(libs.activity)
     implementation(libs.constraintlayout)
 
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth.ktx)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
+
+    // OkHttp for backend token requests
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
-
-    // OkHttp for backend token requests
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // Firebase Auth
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.auth.ktx)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
 }
