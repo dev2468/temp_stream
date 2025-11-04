@@ -49,12 +49,8 @@ class ChannelListActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_channel_list)
 
-        // Setup toolbar
-        findViewById<MaterialToolbar>(R.id.toolbar).apply {
-            setSupportActionBar(this)
-        }
+        findViewById<MaterialToolbar>(R.id.toolbar).apply { setSupportActionBar(this) }
 
-        // Setup search bar
         findViewById<androidx.appcompat.widget.SearchView>(R.id.searchBar).apply {
             setOnQueryTextListener(object : androidx.appcompat.widget.SearchView.OnQueryTextListener {
                 override fun onQueryTextSubmit(query: String?): Boolean = false
@@ -70,45 +66,58 @@ class ChannelListActivity : AppCompatActivity() {
                 val uiState by viewModel.uiStateLiveData.observeAsState(ChannelListUiState.Loading)
                 val availableUsers by viewModel.availableUsersLiveData.observeAsState(emptyList())
                 var showCreateChannelDialog by remember { mutableStateOf(false) }
+                var selectedTab by remember { mutableStateOf("channels") }
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ChannelListContent(
-                        uiState = uiState,
-                        onChannelClick = { channel ->
-                            startActivity(
-                                MessageListActivity.createIntent(
-                                    this@ChannelListActivity,
-                                    channel.cid,
-                                    channel.name
-                                )
-                            )
-                        }
-                    )
-
-                    // Floating Action Button
-                    FloatingActionButton(
-                        onClick = { showCreateChannelDialog = true },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(16.dp),
-                        containerColor = Color(0xFF005FFF)
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "Create Channel",
-                            tint = Color.White
-                        )
-                    }
-
-                    if (showCreateChannelDialog) {
-                        CreateChannelDialog(
-                            onDismiss = { showCreateChannelDialog = false },
-                            availableUsers = availableUsers,
-                            onCreateChannel = { memberIds, groupName ->
-                                viewModel.createChannel(memberIds, groupName)
-                                showCreateChannelDialog = false
+                Scaffold(
+                    bottomBar = {
+                        BottomNavigationBar(
+                            selectedTab = selectedTab,
+                            onTabSelected = { tab ->
+                                selectedTab = tab
+                                if (tab == "profile") {
+                                    startActivity(Intent(this@ChannelListActivity, ProfileActivity::class.java))
+                                }
                             }
                         )
+                    }
+                ) { paddingValues ->
+                    Box(modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)) {
+
+                        ChannelListContent(
+                            uiState = uiState,
+                            onChannelClick = { channel ->
+                                startActivity(
+                                    MessageListActivity.createIntent(
+                                        this@ChannelListActivity,
+                                        channel.cid,
+                                        channel.name
+                                    )
+                                )
+                            }
+                        )
+
+                        FloatingActionButton(
+                            onClick = { showCreateChannelDialog = true },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(16.dp),
+                            containerColor = Color(0xFF005FFF)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Create Channel", tint = Color.White)
+                        }
+
+                        if (showCreateChannelDialog) {
+                            CreateChannelDialog(
+                                onDismiss = { showCreateChannelDialog = false },
+                                availableUsers = availableUsers,
+                                onCreateChannel = { memberIds, groupName ->
+                                    viewModel.createChannel(memberIds, groupName)
+                                    showCreateChannelDialog = false
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -136,62 +145,77 @@ class ChannelListActivity : AppCompatActivity() {
     }
 
     companion object {
-        fun createIntent(context: Context): Intent {
-            return Intent(context, ChannelListActivity::class.java)
-        }
+        fun createIntent(context: Context): Intent = Intent(context, ChannelListActivity::class.java)
     }
 }
 
+/* -------------------- NAVBAR -------------------- */
+@Composable
+fun BottomNavigationBar(selectedTab: String, onTabSelected: (String) -> Unit) {
+    NavigationBar(containerColor = Color.White) {
+        NavigationBarItem(
+            selected = selectedTab == "channels",
+            onClick = { onTabSelected("channels") },
+            icon = { Icon(Icons.Default.Chat, contentDescription = "Channels") },
+            label = { Text("Channels") }
+        )
+        NavigationBarItem(
+            selected = selectedTab == "profile",
+            onClick = { onTabSelected("profile") },
+            icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
+            label = { Text("Profile") }
+        )
+    }
+}
+
+/* -------------------- CHANNEL LIST -------------------- */
 @Composable
 fun ChannelListContent(
     uiState: ChannelListUiState,
     onChannelClick: (Channel) -> Unit
 ) {
     when (uiState) {
-        is ChannelListUiState.Loading -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+        is ChannelListUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+
+        is ChannelListUiState.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.Chat, null, Modifier.size(64.dp), tint = Color.Gray)
+                Spacer(Modifier.height(16.dp))
+                Text("No channels yet", color = Color.Gray)
             }
         }
-        is ChannelListUiState.Empty -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Chat, null, Modifier.size(64.dp), tint = Color.Gray)
-                    Spacer(Modifier.height(16.dp))
-                    Text("No channels yet", color = Color.Gray)
-                }
+
+        is ChannelListUiState.Success -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(uiState.channels) { channel ->
+                ChannelItem(
+                    channel = channel,
+                    currentUserId = ChatClient.instance().getCurrentUser()?.id ?: "",
+                    onClick = { onChannelClick(channel) }
+                )
             }
         }
-        is ChannelListUiState.Success -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(uiState.channels) { channel ->
-                    ChannelItem(
-                        channel = channel,
-                        currentUserId = ChatClient.instance().getCurrentUser()?.id ?: "",
-                        onClick = { onChannelClick(channel) }
-                    )
-                }
-            }
-        }
-        is ChannelListUiState.Error -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(uiState.message, color = MaterialTheme.colorScheme.error)
-            }
+
+        is ChannelListUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(uiState.message, color = MaterialTheme.colorScheme.error)
         }
     }
 }
 
+/* -------------------- CHANNEL ITEM -------------------- */
 @Composable
 fun ChannelItem(channel: Channel, currentUserId: String, onClick: () -> Unit) {
     val lastMessage = channel.messages.lastOrNull()
     val unreadCount = channel.unreadCount ?: 0
     val channelName = channel.name.ifEmpty {
         channel.members.filter { it.user.id != currentUserId }
-            .joinToString(", ") { it.user.name }.ifEmpty { "Unnamed Channel" }
+            .joinToString(", ") { it.user.name }
+            .ifEmpty { "Unnamed Channel" }
     }
 
     Card(
@@ -267,6 +291,7 @@ fun ChannelItem(channel: Channel, currentUserId: String, onClick: () -> Unit) {
     }
 }
 
+/* -------------------- UTILS -------------------- */
 fun formatTime(date: Date): String {
     val now = Calendar.getInstance()
     val messageTime = Calendar.getInstance().apply { time = date }
@@ -279,6 +304,7 @@ fun formatTime(date: Date): String {
     }
 }
 
+/* -------------------- CREATE CHANNEL DIALOG -------------------- */
 @Composable
 fun CreateChannelDialog(
     onDismiss: () -> Unit,
@@ -294,11 +320,7 @@ fun CreateChannelDialog(
         title = { Text("Create New Channel") },
         text = {
             Column {
-                Text(
-                    "Select users to chat with:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+                Text("Select users to chat with:", modifier = Modifier.padding(bottom = 8.dp))
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
@@ -345,10 +367,6 @@ fun CreateChannelDialog(
                 Text("Create")
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

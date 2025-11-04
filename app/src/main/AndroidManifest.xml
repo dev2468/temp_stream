@@ -22,6 +22,7 @@
         <!-- SplashActivity is now the LAUNCHER -->
         <activity
             android:name=".SplashActivity"
+
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -48,6 +49,9 @@
             android:name=".MessageListActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity android:name=".ProfileActivity" />
+
     </application>
 
 </manifest>
