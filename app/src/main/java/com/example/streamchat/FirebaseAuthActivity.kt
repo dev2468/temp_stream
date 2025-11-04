@@ -32,11 +32,16 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.ViewModelFactory
 import com.example.streamchat.ui.auth.AuthUiState
 import com.example.streamchat.ui.auth.FirebaseAuthViewModel
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import io.getstream.chat.android.client.ChatClient
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class FirebaseAuthActivity : ComponentActivity() {
 
@@ -46,6 +51,9 @@ class FirebaseAuthActivity : ComponentActivity() {
             ChatRepository.getInstance(applicationContext)
         )
     }
+
+    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    private val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,28 +73,126 @@ class FirebaseAuthActivity : ComponentActivity() {
                 }
             }
 
-            ModernAuthScreen(
+            UsernameAuthScreen(
                 uiState = uiState,
-                onSignIn = { email, password -> viewModel.signIn(email, password) },
-                onSignUp = { email, password, fullName -> viewModel.signUp(email, password, fullName) }
+                onSignIn = { username, password ->
+                    signInWithUsername(username, password)
+                },
+                onSignUp = { email, password, username ->
+                    validateAndSignUp(username, email, password)
+                }
             )
+        }
+    }
+
+    // ✅ Validate username, ensure uniqueness, and save user record
+    private fun validateAndSignUp(username: String, email: String, password: String) {
+        val context = this
+
+        if (username.isBlank()) {
+            Toast.makeText(context, "Please enter a username", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (!username.matches(Regex("^[a-z0-9_]{3,15}$"))) {
+            Toast.makeText(
+                context,
+                "Username must be 3–15 lowercase letters, digits, or underscores",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val querySnapshot = firestore.collection("users")
+                    .whereEqualTo("username", username.lowercase().trim())
+                    .get()
+                    .await()
+
+                if (!querySnapshot.isEmpty) {
+                    Toast.makeText(context, "Username already taken", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // ✅ Create Firebase Auth user
+                val result = auth.createUserWithEmailAndPassword(email, password).await()
+                val user = result.user
+
+                if (user != null) {
+                    val uid = user.uid
+                    val userMap = mapOf(
+                        "uid" to uid,
+                        "username" to username.lowercase().trim(),
+                        "email" to email.trim(),
+                        "createdAt" to System.currentTimeMillis()
+                    )
+
+                    // ✅ Save user info in Firestore
+                    firestore.collection("users").document(uid).set(userMap).await()
+
+                    Toast.makeText(context, "Account created successfully!", Toast.LENGTH_SHORT).show()
+
+                    // ✅ Connect to Stream Chat and continue
+                    viewModel.signIn(email, password)
+                } else {
+                    Toast.makeText(context, "Failed to create user", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ✅ Login using username (Firestore lookup → Firebase Auth sign-in)
+    private fun signInWithUsername(username: String, password: String) {
+        val context = this
+
+        if (username.isBlank() || password.isBlank()) {
+            Toast.makeText(context, "Enter both username and password", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val querySnapshot = firestore.collection("users")
+                    .whereEqualTo("username", username.lowercase().trim())
+                    .get()
+                    .await()
+
+                if (querySnapshot.isEmpty) {
+                    Toast.makeText(context, "No account found with that username", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val document = querySnapshot.documents.first()
+                val email = document.getString("email")
+
+                if (email.isNullOrBlank()) {
+                    Toast.makeText(context, "User record incomplete — missing email", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                viewModel.signIn(email, password)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Login error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
 
 @Composable
-fun ModernAuthScreen(
+fun UsernameAuthScreen(
     uiState: AuthUiState,
     onSignIn: (String, String) -> Unit,
     onSignUp: (String, String, String) -> Unit
 ) {
+    var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var fullName by remember { mutableStateOf("") }
     var isSignUpMode by remember { mutableStateOf(false) }
     val isLoading = uiState is AuthUiState.Loading
-
-    val robotoFlexLight = FontFamily(Font(R.font.roboto_flex_light))
+    val roboto = FontFamily(Font(R.font.roboto_flex_light))
 
     Box(
         modifier = Modifier
@@ -119,19 +225,19 @@ fun ModernAuthScreen(
                 )
             )
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(Modifier.height(40.dp))
 
             Text(
                 text = if (isSignUpMode) "Create Account" else "Log In",
-                fontFamily = robotoFlexLight,
+                fontFamily = roboto,
                 fontWeight = FontWeight.Bold,
                 fontSize = 32.sp,
                 color = Color.White
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-            val textFieldColors = TextFieldDefaults.colors(
+            val fieldColors = TextFieldDefaults.colors(
                 focusedContainerColor = Color.Black.copy(alpha = 0.35f),
                 unfocusedContainerColor = Color.Black.copy(alpha = 0.25f),
                 cursorColor = Color.White,
@@ -147,70 +253,69 @@ fun ModernAuthScreen(
 
             if (isSignUpMode) {
                 TextField(
-                    value = fullName,
-                    onValueChange = { fullName = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
+                    value = username,
+                    onValueChange = { username = it.lowercase().trim() },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(50),
-                    label = { Text("Full Name", fontFamily = robotoFlexLight) },
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    colors = textFieldColors,
+                    label = { Text("Username (unique)", fontFamily = roboto) },
+                    leadingIcon = { Icon(Icons.Default.Person, null) },
+                    colors = fieldColors,
                     singleLine = true,
                     enabled = !isLoading
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
+
+                TextField(
+                    value = email,
+                    onValueChange = { email = it.trim() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(50),
+                    label = { Text("Email", fontFamily = roboto) },
+                    leadingIcon = { Icon(Icons.Default.Email, null) },
+                    colors = fieldColors,
+                    singleLine = true,
+                    enabled = !isLoading
+                )
+            } else {
+                TextField(
+                    value = username,
+                    onValueChange = { username = it.lowercase().trim() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(50),
+                    label = { Text("Username", fontFamily = roboto) },
+                    leadingIcon = { Icon(Icons.Default.Person, null) },
+                    colors = fieldColors,
+                    singleLine = true,
+                    enabled = !isLoading
+                )
             }
 
-            TextField(
-                value = email,
-                onValueChange = { email = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                shape = RoundedCornerShape(50),
-                label = { Text("Email", fontFamily = robotoFlexLight) },
-                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                colors = textFieldColors,
-                singleLine = true,
-                enabled = !isLoading
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
             TextField(
                 value = password,
                 onValueChange = { password = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(50),
-                label = { Text("Password", fontFamily = robotoFlexLight) },
-                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                colors = textFieldColors,
+                label = { Text("Password", fontFamily = roboto) },
+                leadingIcon = { Icon(Icons.Default.Lock, null) },
+                colors = fieldColors,
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 enabled = !isLoading
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
             ClickableText(
                 text = buildAnnotatedString {
                     withStyle(
-                        style = SpanStyle(
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontFamily = robotoFlexLight
-                        )
+                        style = SpanStyle(color = Color.White.copy(alpha = 0.8f), fontFamily = roboto)
                     ) {
                         append(if (isSignUpMode) "Already have an account? " else "Don't have an account? ")
                     }
                     withStyle(
-                        style = SpanStyle(
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = robotoFlexLight
-                        )
+                        style = SpanStyle(color = Color.White, fontWeight = FontWeight.Bold, fontFamily = roboto)
                     ) {
                         append(if (isSignUpMode) "Log In" else "Sign Up")
                     }
@@ -218,37 +323,25 @@ fun ModernAuthScreen(
                 onClick = { isSignUpMode = !isSignUpMode }
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(Modifier.height(32.dp))
 
             Button(
                 onClick = {
-                    if (isSignUpMode) onSignUp(email, password, fullName)
-                    else onSignIn(email, password)
+                    if (isSignUpMode) onSignUp(email, password, username)
+                    else onSignIn(username, password)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
-                enabled = !isLoading && email.isNotBlank() && password.isNotBlank() && (!isSignUpMode || fullName.isNotBlank()),
+                enabled = !isLoading && username.isNotBlank() && password.isNotBlank() && (!isSignUpMode || email.isNotBlank()),
                 shape = RoundedCornerShape(50),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Black.copy(alpha = 0.35f),
-                    contentColor = Color.White,
-                    disabledContainerColor = Color.Black.copy(alpha = 0.2f)
+                    contentColor = Color.White
                 )
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = Color.White
-                    )
-                } else {
-                    Text(
-                        if (isSignUpMode) "Sign Up" else "Log In",
-                        fontFamily = robotoFlexLight,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                }
+                if (isLoading) CircularProgressIndicator(Modifier.size(24.dp), color = Color.White)
+                else Text(if (isSignUpMode) "Sign Up" else "Log In", fontFamily = roboto, fontWeight = FontWeight.Bold)
             }
         }
     }

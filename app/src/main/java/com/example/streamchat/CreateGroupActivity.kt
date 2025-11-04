@@ -15,7 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,9 +35,12 @@ import coil.compose.AsyncImage
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.ViewModelFactory
 import com.example.streamchat.ui.channels.ChannelListViewModel
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.models.User
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class CreateGroupActivity : ComponentActivity() {
 
@@ -49,7 +52,6 @@ class CreateGroupActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ White system bars with dark icons
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.White.toArgb()
         window.navigationBarColor = Color.White.toArgb()
@@ -81,18 +83,44 @@ fun CreateGroupScreen(
     onBack: () -> Unit,
     onGroupCreated: (Boolean) -> Unit
 ) {
-    val availableUsers by viewModel.availableUsers.collectAsState()
-    val selectedUsers = remember { mutableStateListOf<User>() }
-    var groupName by remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val coda = FontFamily(Font(R.font.coda_extrabold))
+    val roboto = FontFamily(Font(R.font.roboto_flex_light))
 
-    val coda = FontFamily(Font(resId = R.font.coda_extrabold))
-    val roboto = FontFamily(Font(resId = R.font.roboto_flex_light))
+    val firestore = remember { FirebaseFirestore.getInstance() }
+    val auth = remember { FirebaseAuth.getInstance() }
 
-    LaunchedEffect(Unit) { viewModel.refreshAvailableUsers() }
+    var groupName by remember { mutableStateOf("") }
+    var friends by remember { mutableStateOf<List<User>>(emptyList()) }
+    val selectedUsers = remember { mutableStateListOf<User>() }
 
-    // 🎨 Use same input field theme as login screen
+    // 🔹 Load friends only (not all Stream users)
+    LaunchedEffect(Unit) {
+        val currentUid = auth.currentUser?.uid ?: return@LaunchedEffect
+        try {
+            val friendDocs = firestore.collection("friends")
+                .document(currentUid)
+                .collection("list")
+                .get()
+                .await()
+
+            val friendList = friendDocs.mapNotNull { doc ->
+                val friendId = doc.id
+                val username = doc.getString("username") ?: ""
+                val email = doc.getString("email") ?: ""
+                User(
+                    id = friendId,
+                    name = username,
+                    extraData = mutableMapOf("email" to email)
+                )
+            }
+            friends = friendList
+        } catch (e: Exception) {
+            Toast.makeText(context, "Failed to load friends: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val textFieldColors = TextFieldDefaults.colors(
         focusedContainerColor = Color.Black.copy(alpha = 0.05f),
         unfocusedContainerColor = Color.Black.copy(alpha = 0.03f),
@@ -120,7 +148,7 @@ fun CreateGroupScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                IconButton(onClick = onBack) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.Black)
                 }
                 Spacer(Modifier.width(8.dp))
@@ -138,7 +166,7 @@ fun CreateGroupScreen(
                 onClick = {
                     coroutineScope.launch {
                         if (selectedUsers.isEmpty()) {
-                            Toast.makeText(context, "Select at least one user", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Select at least one friend", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
 
@@ -150,9 +178,10 @@ fun CreateGroupScreen(
                         if (cid != null) {
                             val intent = MessageListActivity.createIntent(context, cid, groupName)
                             context.startActivity(intent)
-                            (context as? ComponentActivity)?.finish()
                             onGroupCreated(true)
-                        } else onGroupCreated(false)
+                        } else {
+                            onGroupCreated(false)
+                        }
                     }
                 },
                 modifier = Modifier
@@ -172,7 +201,7 @@ fun CreateGroupScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp)
         ) {
-            // 🌟 Updated group name field styled like your login UI
+            // 🔹 Group Name Input
             TextField(
                 value = groupName,
                 onValueChange = { groupName = it },
@@ -183,7 +212,7 @@ fun CreateGroupScreen(
                 label = { Text("Group Name (optional)", fontFamily = roboto) },
                 leadingIcon = {
                     Icon(
-                        imageVector = Icons.Default.Person,
+                        imageVector = Icons.Default.Group,
                         contentDescription = "Group name",
                         tint = Color(0xFF0F52BA)
                     )
@@ -195,7 +224,7 @@ fun CreateGroupScreen(
             Spacer(Modifier.height(20.dp))
 
             Text(
-                "Select Members",
+                "Select Friends to Add",
                 fontFamily = coda,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F52BA),
@@ -204,17 +233,17 @@ fun CreateGroupScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            if (availableUsers.isEmpty()) {
+            if (friends.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFF0F52BA))
+                    Text("No friends available", color = Color.Gray)
                 }
             } else {
                 LazyColumn(
                     contentPadding = PaddingValues(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(availableUsers) { user ->
-                        GroupUserRow(
+                    items(friends) { user ->
+                        FriendSelectableRow(
                             user = user,
                             selected = selectedUsers.contains(user),
                             onToggle = {
@@ -230,10 +259,8 @@ fun CreateGroupScreen(
     }
 }
 
-
-
 @Composable
-fun GroupUserRow(user: User, selected: Boolean, onToggle: () -> Unit, roboto: FontFamily) {
+fun FriendSelectableRow(user: User, selected: Boolean, onToggle: () -> Unit, roboto: FontFamily) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()

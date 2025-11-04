@@ -79,14 +79,18 @@ dependencies {
     implementation(libs.constraintlayout)
 
     // Firebase
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.auth.ktx)
+
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
 
     // OkHttp for backend token requests
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // ✅ Firebase BoM (unify versions)
+    implementation(platform("com.google.firebase:firebase-bom:33.3.0")) // 33.4.0 has missing Firestore
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
