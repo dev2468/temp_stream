@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { StreamChat } from 'stream-chat';
 import admin from 'firebase-admin';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -15,7 +16,8 @@ const {
   ALLOWED_ORIGINS = '',
   TOKEN_SERVER_SECRET,
   FIREBASE_SERVICE_ACCOUNT_JSON_BASE64,
-  FIREBASE_PROJECT_ID
+  FIREBASE_PROJECT_ID,
+  GEMINI_API_KEY
 } = process.env;
 
 if (!STREAM_KEY || !STREAM_SECRET) {
@@ -24,6 +26,22 @@ if (!STREAM_KEY || !STREAM_SECRET) {
 }
 
 const serverClient = StreamChat.getInstance(STREAM_KEY, STREAM_SECRET);
+
+// Initialize Gemini AI
+let genAI = null;
+let geminiModel = null;
+if (GEMINI_API_KEY) {
+  try {
+    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    console.log('Gemini AI initialized successfully');
+  } catch (e) {
+    console.warn('Failed to initialize Gemini AI:', e.message);
+  }
+}
+
+// Initialize Firestore for bot memory (only if Firebase is enabled)
+let db = null;
 
 const app = express();
 app.use(helmet());
@@ -68,10 +86,12 @@ try {
     const json = JSON.parse(Buffer.from(FIREBASE_SERVICE_ACCOUNT_JSON_BASE64, 'base64').toString('utf8'));
     admin.initializeApp({ credential: admin.credential.cert(json), projectId: FIREBASE_PROJECT_ID || json.project_id });
     firebaseEnabled = true;
+    db = admin.firestore(); // Initialize Firestore for bot memory
     console.log('Firebase Admin initialized via base64 service account');
   } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     admin.initializeApp();
     firebaseEnabled = true;
+    db = admin.firestore(); // Initialize Firestore for bot memory
     console.log('Firebase Admin initialized via GOOGLE_APPLICATION_CREDENTIALS');
   }
 } catch (e) {
@@ -266,6 +286,121 @@ app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
   } catch (e) {
     console.error('Error fetching event:', e);
     res.status(500).json({ error: 'Failed to fetch event', detail: e.message });
+  }
+});
+
+// ========== AI CHATBOT ENDPOINT ==========
+
+// Chat with AI bot (mention-based: @bot <message>)
+app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
+  try {
+    const { message, channelId, channelType = 'messaging' } = req.body;
+    const userId = req.firebaseUser?.id || req.body.userId;
+
+    if (!userId || !message || !channelId) {
+      return res.status(400).json({ error: 'Missing required fields: userId, message, channelId' });
+    }
+
+    if (!geminiModel) {
+      return res.status(503).json({ error: 'AI bot is not configured. Please set GEMINI_API_KEY in environment.' });
+    }
+
+    // Get or create bot user
+    const botUserId = 'ai-assistant';
+    try {
+      await serverClient.upsertUser({
+        id: botUserId,
+        name: 'AI Study Bot',
+        image: 'https://cdn-icons-png.flaticon.com/512/4712/4712027.png', // Robot icon
+        role: 'user'
+      });
+    } catch (e) {
+      console.warn('Bot user upsert warning:', e.message);
+    }
+
+    // Fetch conversation history from Firestore (if available)
+    let conversationHistory = [];
+    if (db) {
+      try {
+        const historyRef = db.collection('chat_memory').doc(userId);
+        const historyDoc = await historyRef.get();
+        if (historyDoc.exists) {
+          conversationHistory = historyDoc.data().history || [];
+        }
+      } catch (e) {
+        console.warn('Failed to fetch conversation history:', e.message);
+      }
+    }
+
+    // Build conversation context for Gemini
+    // Keep last 10 messages to avoid token limits
+    const recentHistory = conversationHistory.slice(-10);
+    
+    // System prompt
+    const systemPrompt = `You are an AI Study Assistant helping students learn. Be helpful, encouraging, and concise. Keep responses under 200 words unless asked for detailed explanations.`;
+    
+    // Build chat history format for Gemini
+    const chatHistory = [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Understood! I\'m here to help you learn. Ask me anything!' }] }
+    ];
+    
+    // Add previous conversation
+    for (const msg of recentHistory) {
+      chatHistory.push({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      });
+    }
+
+    // Start chat session with history
+    const chat = geminiModel.startChat({
+      history: chatHistory,
+      generationConfig: {
+        maxOutputTokens: 500,
+        temperature: 0.7,
+      }
+    });
+
+    // Send user's message
+    const result = await chat.sendMessage(message);
+    const botReply = result.response.text();
+
+    // Save updated conversation history to Firestore
+    if (db) {
+      try {
+        conversationHistory.push({ role: 'user', content: message });
+        conversationHistory.push({ role: 'assistant', content: botReply });
+        
+        // Keep only last 20 messages to prevent unlimited growth
+        const trimmedHistory = conversationHistory.slice(-20);
+        
+        const historyRef = db.collection('chat_memory').doc(userId);
+        await historyRef.set({ history: trimmedHistory, updatedAt: new Date() });
+      } catch (e) {
+        console.warn('Failed to save conversation history:', e.message);
+      }
+    }
+
+    // Send bot reply to Stream Chat channel
+    try {
+      const channel = serverClient.channel(channelType, channelId);
+      await channel.sendMessage({
+        text: botReply,
+        user_id: botUserId
+      });
+    } catch (e) {
+      console.error('Failed to send bot message to channel:', e.message);
+      // Still return the reply even if posting to channel fails
+    }
+
+    res.json({
+      success: true,
+      reply: botReply
+    });
+  } catch (e) {
+    console.error('Error in bot chat:', e);
+    res.status(500).json({ error: 'Failed to process bot chat', detail: e.message });
   }
 });
 

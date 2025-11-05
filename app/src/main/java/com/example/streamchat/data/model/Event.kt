@@ -48,3 +48,9 @@ data class EventDetailsResponse(
     val event: Event?,
     val error: String? = null
 )
+
+data class BotResponse(
+    val success: Boolean,
+    val reply: String,
+    val error: String? = null
+)

@@ -7,6 +7,7 @@ import androidx.annotation.RequiresApi
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.streamchat.R
+import com.example.streamchat.data.model.BotResponse
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.token.TokenProvider
 import io.getstream.chat.android.models.User
@@ -351,6 +352,56 @@ class ChatRepository private constructor(context: Context) {
     
     fun clearPendingEventLink() {
         prefs.edit().remove(KEY_PENDING_EVENT).apply()
+    }
+
+    // ========== AI CHATBOT INTEGRATION ==========
+    
+    // Send message to AI bot and get reply
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun sendMessageToBot(
+        message: String,
+        channelId: String,
+        channelType: String = "messaging",
+        firebaseIdToken: String
+    ): BotResponse = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/chat/bot"
+        
+        val currentUser = getCurrentUser() 
+            ?: throw IllegalStateException("User not logged in")
+        
+        val requestBody = JSONObject().apply {
+            put("message", message)
+            put("channelId", channelId)
+            put("channelType", channelType)
+            put("userId", currentUser.id)
+        }
+        
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+            
+            if (!resp.isSuccessful) {
+                val errorMsg = try {
+                    val json = JSONObject(body)
+                    json.optString("error", body)
+                } catch (e: Exception) {
+                    body
+                }
+                throw IllegalStateException("Bot error (${resp.code}): $errorMsg")
+            }
+            
+            val json = JSONObject(body)
+            BotResponse(
+                success = json.optBoolean("success", false),
+                reply = json.optString("reply", "")
+            )
+        }
     }
 
     companion object {
