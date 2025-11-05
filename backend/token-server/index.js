@@ -231,27 +231,41 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
 app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const channel = serverClient.channel('messaging', eventId);
-    
-    const response = await channel.query();
-    
+
+    // Use queryChannels for a robust lookup by ID and type
+    const channels = await serverClient.queryChannels(
+      { type: 'messaging', id: { $eq: eventId } },
+      [],
+      { state: true, watch: false, limit: 1 }
+    );
+
+    if (!channels || channels.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const ch = channels[0];
+    const data = ch.data || {};
+    const memberCount = typeof ch.member_count === 'number'
+      ? ch.member_count
+      : Array.isArray(ch.members) ? ch.members.length : 0;
+
     res.json({
       success: true,
       event: {
-        id: response.channel.id,
-        name: response.channel.data.name,
-        description: response.channel.data.event_description,
-        adminUserId: response.channel.data.event_admin,
-        eventDate: response.channel.data.event_date,
-        coverImage: response.channel.data.event_cover_image,
-        joinLink: response.channel.data.join_link,
-        memberCount: response.members.length,
-        createdAt: response.channel.created_at
+        id: ch.id,
+        name: data.name,
+        description: data.event_description,
+        adminUserId: data.event_admin,
+        eventDate: data.event_date,
+        coverImage: data.event_cover_image,
+        joinLink: data.join_link,
+        memberCount,
+        createdAt: ch.created_at
       }
     });
   } catch (e) {
     console.error('Error fetching event:', e);
-    res.status(404).json({ error: 'Event not found' });
+    res.status(500).json({ error: 'Failed to fetch event', detail: e.message });
   }
 });
 
