@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Event
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -88,6 +89,9 @@ class ChannelListActivity : AppCompatActivity() {
                     },
                     onAddClick = {
                         startActivity(Intent(this, FriendListActivity::class.java))
+                    },
+                    onCreateEventClick = {
+                        startActivity(Intent(this, CreateEventActivity::class.java))
                     }
                 )
             }
@@ -101,11 +105,13 @@ class ChannelListActivity : AppCompatActivity() {
 fun ChannelListScreen(
     viewModel: ChannelListViewModel,
     onChannelClick: (Channel) -> Unit,
-    onAddClick: () -> Unit
+    onAddClick: () -> Unit,
+    onCreateEventClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
-    val filters = listOf("All", "Unread", "Groups", "DMs")
+    val filters = listOf("All", "Unread", "Groups", "DMs", "Events")
+    var showFabMenu by remember { mutableStateOf(false) }
 
     // load channels if needed (ViewModel already does this in init, but safe to refresh)
     LaunchedEffect(Unit) {
@@ -127,8 +133,59 @@ fun ChannelListScreen(
             }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddClick, containerColor = Color(0xFF0F52BA)) {
-                Icon(Icons.Default.Add, contentDescription = "New chat", tint = MaterialTheme.colorScheme.onPrimary)
+            Column(horizontalAlignment = Alignment.End) {
+                // Show menu items when expanded
+                if (showFabMenu) {
+                    // Create Event button
+                    FloatingActionButton(
+                        onClick = {
+                            showFabMenu = false
+                            onCreateEventClick()
+                        },
+                        containerColor = Color(0xFF0F52BA),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Event, contentDescription = "Create Event", tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Create Event", color = Color.White)
+                        }
+                    }
+                    
+                    // New Chat button
+                    FloatingActionButton(
+                        onClick = {
+                            showFabMenu = false
+                            onAddClick()
+                        },
+                        containerColor = Color(0xFF0F52BA),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "New chat", tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("New Chat", color = Color.White)
+                        }
+                    }
+                }
+                
+                // Main FAB
+                FloatingActionButton(
+                    onClick = { showFabMenu = !showFabMenu },
+                    containerColor = Color(0xFF0F52BA)
+                ) {
+                    Icon(
+                        if (showFabMenu) Icons.Default.Add else Icons.Default.Add,
+                        contentDescription = "Menu",
+                        tint = Color.White
+                    )
+                }
             }
         }
     ) { padding ->
@@ -158,6 +215,7 @@ fun ChannelListScreen(
                         "Unread" -> allChannels.filter { (it.extraData["unread_count"] as? Int ?: 0) > 0 }
                         "Groups" -> allChannels.filter { it.memberCount > 2 }
                         "DMs" -> allChannels.filter { it.memberCount <= 2 }
+                        "Events" -> allChannels.filter { it.type == "event" }
                         else -> allChannels
                     }
 

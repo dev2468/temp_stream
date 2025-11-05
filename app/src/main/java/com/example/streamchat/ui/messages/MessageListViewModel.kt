@@ -42,6 +42,11 @@ class MessageListViewModel(
     private val _selectedImages = MutableStateFlow<List<Uri>>(emptyList())
     val selectedImages: StateFlow<List<Uri>> = _selectedImages.asStateFlow()
     val selectedImagesLiveData: LiveData<List<Uri>> = _selectedImages.asLiveData()
+    
+    // Track if user can send messages (for event channels)
+    private val _canSendMessages = MutableStateFlow(true)
+    val canSendMessages: StateFlow<Boolean> = _canSendMessages.asStateFlow()
+    val canSendMessagesLiveData: LiveData<Boolean> = _canSendMessages.asLiveData()
 
     private val channelClient = chatClient.channel(channelId)
 
@@ -99,6 +104,17 @@ class MessageListViewModel(
                 val result = channelClient.watch().await()
                 if (result.isSuccess) {
                     val channel = result.getOrThrow()
+                    
+                    // Check if this is an event channel and if user is admin
+                    val isEventChannel = channel.type == "event"
+                    if (isEventChannel) {
+                        val eventAdmin = channel.extraData["event_admin"] as? String
+                        val currentUserId = chatClient.getCurrentUser()?.id
+                        _canSendMessages.value = currentUserId == eventAdmin
+                    } else {
+                        _canSendMessages.value = true
+                    }
+                    
                     _uiState.value = MessageListUiState.Success(
                         messages = channel.messages,
                         channelName = channel.name.ifEmpty { "Chat" },

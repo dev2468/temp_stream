@@ -89,11 +89,13 @@ class MessageListActivity : ComponentActivity() {
                 val uiState by viewModel.uiStateLiveData.observeAsState(MessageListUiState.Loading)
                 val messageText by viewModel.messageTextLiveData.observeAsState("")
                 val selectedImages by viewModel.selectedImagesLiveData.observeAsState(emptyList())
+                val canSendMessages by viewModel.canSendMessagesLiveData.observeAsState(true)
                 
                 MessageListContent(
                     uiState = uiState,
                     messageText = messageText,
                     selectedImages = selectedImages,
+                    canSendMessages = canSendMessages,
                     onMessageTextChange = { viewModel.onMessageTextChanged(it) },
                     onSendMessage = { viewModel.sendMessage() },
                     onAddImages = { viewModel.addImages(it) },
@@ -253,6 +255,7 @@ fun MessageListContent(
     uiState: MessageListUiState,
     messageText: String,
     selectedImages: List<android.net.Uri>,
+    canSendMessages: Boolean,
     onMessageTextChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
@@ -322,52 +325,82 @@ fun MessageListContent(
         
         // Message Composer at bottom
         Column {
-            if (selectedImages.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Show read-only banner for event channels where user is not admin
+            if (!canSendMessages) {
+                Surface(
+                    color = Color(0xFFFFF3CD),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    selectedImages.forEach { uri ->
-                        Box(Modifier.size(60.dp)) {
-                            AsyncImage(model = uri, contentDescription = null)
-                            IconButton(
-                                onClick = { onRemoveImage(uri) },
-                                modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
-                            ) {
-                                Icon(Icons.Default.Close, "Remove", tint = Color.Red)
-                            }
-                        }
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = Color(0xFF856404),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Only the event organizer can post messages",
+                            color = Color(0xFF856404),
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
             
-            Surface(color = Color.White, shadowElevation = 8.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    IconButton(onClick = { imagePicker.launch("image/*") }) {
-                        Icon(Icons.Default.Add, "Attach", tint = Color(0xFF005FFF))
-                    }
-                    
-                    OutlinedTextField(
-                        value = messageText,
-                        onValueChange = onMessageTextChange,
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Type a message...") },
-                        maxLines = 5
-                    )
-                    
-                    IconButton(
-                        onClick = onSendMessage,
-                        enabled = messageText.isNotBlank() || selectedImages.isNotEmpty()
+            // Show message composer only if user can send messages
+            if (canSendMessages) {
+                if (selectedImages.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Send,
-                            "Send",
-                            tint = if (messageText.isNotBlank() || selectedImages.isNotEmpty())
-                                Color(0xFF005FFF) else Color.Gray
+                        selectedImages.forEach { uri ->
+                            Box(Modifier.size(60.dp)) {
+                                AsyncImage(model = uri, contentDescription = null)
+                                IconButton(
+                                    onClick = { onRemoveImage(uri) },
+                                    modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, "Remove", tint = Color.Red)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Surface(color = Color.White, shadowElevation = 8.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        IconButton(onClick = { imagePicker.launch("image/*") }) {
+                            Icon(Icons.Default.Add, "Attach", tint = Color(0xFF005FFF))
+                        }
+                        
+                        OutlinedTextField(
+                            value = messageText,
+                            onValueChange = onMessageTextChange,
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Type a message...") },
+                            maxLines = 5
                         )
+                        
+                        IconButton(
+                            onClick = onSendMessage,
+                            enabled = messageText.isNotBlank() || selectedImages.isNotEmpty()
+                        ) {
+                            Icon(
+                                Icons.Default.Send,
+                                "Send",
+                                tint = if (messageText.isNotBlank() || selectedImages.isNotEmpty())
+                                    Color(0xFF005FFF) else Color.Gray
+                            )
+                        }
                     }
                 }
             }

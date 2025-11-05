@@ -63,7 +63,20 @@ class FirebaseAuthActivity : ComponentActivity() {
             LaunchedEffect(uiState) {
                 when (val state = uiState) {
                     is AuthUiState.Success -> {
-                        startActivity(Intent(this@FirebaseAuthActivity, ChannelListActivity::class.java))
+                        // Check if there's a pending event link to join
+                        val repository = ChatRepository.getInstance(applicationContext)
+                        val pendingEventLink = repository.getPendingEventLink()
+                        
+                        if (pendingEventLink != null) {
+                            // Clear the pending link
+                            repository.clearPendingEventLink()
+                            // Redirect to EventJoinActivity with the link
+                            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(pendingEventLink))
+                            startActivity(intent)
+                        } else {
+                            // Normal flow - go to channel list
+                            startActivity(Intent(this@FirebaseAuthActivity, ChannelListActivity::class.java))
+                        }
                         finish()
                     }
                     is AuthUiState.Error -> {
