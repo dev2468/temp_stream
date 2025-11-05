@@ -103,7 +103,24 @@ async function verifyFirebaseIdToken(req, res, next) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, key: !!STREAM_KEY });
+  // Expose only safe config for quick diagnostics. STREAM_KEY is public (also shipped in client apps).
+  res.json({
+    ok: true,
+    stream_key: STREAM_KEY,
+    firebase_enabled: firebaseEnabled,
+    firebase_project_id: FIREBASE_PROJECT_ID || undefined
+  });
+});
+
+// Secondary health endpoint with a different path to avoid any caches and to help identify new deployments
+app.get('/healthz', (_req, res) => {
+  res.json({
+    ok: true,
+    stream_key: STREAM_KEY,
+    firebase_enabled: firebaseEnabled,
+    firebase_project_id: FIREBASE_PROJECT_ID || undefined,
+    started_at: new Date().toISOString()
+  });
 });
 
 // Issue a token and upsert the user so channel creation works
@@ -292,4 +309,9 @@ app.post('/webhook/message', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Token server listening on http://localhost:${PORT}`);
+  try {
+    const masked = (STREAM_KEY || '').replace(/.(?=.{4})/g, '*');
+    console.log(`[diag] Using Stream API key: ${masked}`);
+    console.log(`[diag] Firebase enabled: ${firebaseEnabled}${FIREBASE_PROJECT_ID ? ` (project: ${FIREBASE_PROJECT_ID})` : ''}`);
+  } catch {}
 });

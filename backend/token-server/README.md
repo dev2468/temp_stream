@@ -23,7 +23,7 @@ npm run start
 Server runs on http://localhost:8080 by default.
 
 ## Endpoints
-- GET /health → { ok: true }
+- GET /health → { ok: true, stream_key: "<your-stream-api-key>", firebase_enabled: true|false, firebase_project_id?: string }
 - GET /token?user_id=john&name=John%20Doe&image=https://... → { token: "..." }
   - Also upserts the user so they exist for channel creation.
   - If Supabase is configured, requires `Authorization: Bearer <supabase_access_token>` and derives `user_id` from `sub`.
