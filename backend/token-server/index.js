@@ -145,8 +145,8 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
     const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const joinLink = `temp://event/${eventId}`;
 
-    // Create Stream channel with event type
-    const channel = serverClient.channel('event', eventId, {
+    // Create Stream channel with messaging type (using existing type)
+    const channel = serverClient.channel('messaging', eventId, {
       name: eventName,
       event_admin: adminUserId,
       event_description: description || '',
@@ -154,12 +154,14 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
       event_cover_image: coverImage || '',
       join_link: joinLink,
       created_by: { id: adminUserId },
-      members: [adminUserId], // Admin is the first member
+      is_event_channel: true, // Mark as event channel
     });
 
+    // Create channel and add admin as member first
     await channel.create();
+    await channel.addMembers([adminUserId]);
 
-    // Make admin a moderator (for permissions)
+    // Then make admin a moderator (for permissions)
     await channel.addModerators([adminUserId]);
 
     res.json({
@@ -185,7 +187,7 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing eventId or userId' });
     }
 
-    const channel = serverClient.channel('event', eventId);
+    const channel = serverClient.channel('messaging', eventId);
     
     // Check if channel exists
     try {
@@ -212,7 +214,7 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
 app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventId } = req.params;
-    const channel = serverClient.channel('event', eventId);
+    const channel = serverClient.channel('messaging', eventId);
     
     const response = await channel.query();
     
@@ -243,8 +245,8 @@ app.post('/webhook/message', async (req, res) => {
   try {
     const { type, message, channel_type, channel_id } = req.body;
 
-    // Only validate for event channels
-    if (channel_type !== 'event') {
+    // Only validate for event channels (check custom flag)
+    if (channel_type !== 'messaging') {
       return res.status(200).json({ message: 'allowed' });
     }
 
@@ -261,9 +263,15 @@ app.post('/webhook/message', async (req, res) => {
       });
     }
 
-    // Get channel to check admin
-    const channel = serverClient.channel('event', channel_id);
+    // Get channel to check if it's an event channel and check admin
+    const channel = serverClient.channel('messaging', channel_id);
     const channelData = await channel.query();
+    
+    // Only validate if this is an event channel
+    if (!channelData.channel.data.is_event_channel) {
+      return res.status(200).json({ message: 'allowed' });
+    }
+    
     const eventAdmin = channelData.channel.data.event_admin;
 
     // Check if sender is the admin

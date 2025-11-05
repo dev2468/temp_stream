@@ -215,7 +215,7 @@ fun ChannelListScreen(
                         "Unread" -> allChannels.filter { (it.extraData["unread_count"] as? Int ?: 0) > 0 }
                         "Groups" -> allChannels.filter { it.memberCount > 2 }
                         "DMs" -> allChannels.filter { it.memberCount <= 2 }
-                        "Events" -> allChannels.filter { it.type == "event" }
+                        "Events" -> allChannels.filter { it.extraData["is_event_channel"] as? Boolean == true }
                         else -> allChannels
                     }
 

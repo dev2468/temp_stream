@@ -106,7 +106,7 @@ class MessageListViewModel(
                     val channel = result.getOrThrow()
                     
                     // Check if this is an event channel and if user is admin
-                    val isEventChannel = channel.type == "event"
+                    val isEventChannel = channel.extraData["is_event_channel"] as? Boolean == true
                     if (isEventChannel) {
                         val eventAdmin = channel.extraData["event_admin"] as? String
                         val currentUserId = chatClient.getCurrentUser()?.id
