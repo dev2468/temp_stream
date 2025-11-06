@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.animateColorAsState
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +48,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
-import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 
 
@@ -150,7 +151,6 @@ fun ChannelListScreen(
                 is ChannelListUiState.Empty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text("No chats yet — start a new one!", color = Color.Gray)
                 }
-
                 is ChannelListUiState.Success -> {
                     val allChannels = (uiState as ChannelListUiState.Success).channels
                     val filtered = when (selectedFilter) {
@@ -314,18 +314,60 @@ fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (Stri
 @Composable
 fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
-    var username by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val firestore = FirebaseFirestore.getInstance()
+    val storage = com.google.firebase.storage.FirebaseStorage.getInstance()
+    val client = ChatClient.instance()
 
-    // Fetch username from Firebase Realtime Database
+    var username by remember { mutableStateOf<String?>(null) }
+    var photoUrl by remember { mutableStateOf(user?.photoUrl?.toString() ?: "") }
+
+    // 🔹 Image Picker for choosing new profile picture
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            val uid = user?.uid ?: return@let
+            val fileRef = storage.reference.child("profile_images/$uid.jpg")
+
+            // 🔸 Upload file to Firebase Storage
+            fileRef.putFile(it)
+                .continueWithTask { task ->
+                    if (!task.isSuccessful) throw task.exception ?: Exception("Upload failed")
+                    fileRef.downloadUrl
+                }
+                .addOnSuccessListener { downloadUri ->
+                    val downloadUrl = downloadUri.toString()
+                    photoUrl = downloadUrl
+
+                    // 🔸 Save the image URL to Firestore under users/{uid}/profileImageUrl
+                    firestore.collection("users").document(uid)
+                        .update("profileImageUrl", downloadUrl)
+                        .addOnFailureListener {
+                            firestore.collection("users").document(uid)
+                                .set(mapOf("profileImageUrl" to downloadUrl))
+                        }
+
+                    // 🔸 Update Stream user profile
+                    val currentUser = client.getCurrentUser()
+                    if (currentUser != null) {
+                        val updatedUser = currentUser.copy(image = downloadUrl)
+                        client.updateUser(updatedUser).enqueue()
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.e("ProfileUpload", "Failed to upload: ${e.message}")
+                }
+        }
+    }
+
+    // 🔹 Fetch username + profile from Firestore
     LaunchedEffect(user?.uid) {
         user?.uid?.let { uid ->
-            val db = FirebaseFirestore.getInstance()
-            db.collection("users")
-                .document(uid)
-                .get()
+            firestore.collection("users").document(uid).get()
                 .addOnSuccessListener { snapshot ->
-                    val fetchedUsername = snapshot.getString("username")
-                    username = fetchedUsername ?: "Unknown"
+                    username = snapshot.getString("username") ?: "Unknown"
+                    photoUrl = snapshot.getString("profileImageUrl") ?: photoUrl
                 }
                 .addOnFailureListener {
                     username = "Unknown"
@@ -340,23 +382,43 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
             .background(Color.White),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Header with theme blue
+        // 🔹 Header with profile image + picker
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(180.dp)
+                .height(200.dp)
                 .background(Color(0xFF0F52BA)),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                AsyncImage(
-                    model = user?.photoUrl ?: "",
-                    contentDescription = "Profile Image",
+                Box(
                     modifier = Modifier
-                        .size(100.dp)
+                        .size(110.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.2f))
-                )
+                        .clickable { imagePicker.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = if (photoUrl.isNotBlank()) photoUrl else R.drawable.ic_person_placeholder,
+                        contentDescription = "Profile Image",
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clip(CircleShape)
+                    )
+
+                    Icon(
+                        Icons.Default.CameraAlt,
+                        contentDescription = "Edit",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(28.dp)
+                            .background(Color(0x80000000), CircleShape)
+                            .padding(4.dp)
+                    )
+                }
+
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = username ?: "Loading...",
@@ -369,7 +431,7 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
 
         Spacer(Modifier.height(24.dp))
 
-        // Info section
+        // 🔹 Info section
         Column(modifier = Modifier.padding(horizontal = 24.dp)) {
             ProfileInfoItem("Username", username ?: user?.uid?.take(8) ?: "Unknown")
             ProfileInfoItem("Email", user?.email ?: "No email")
@@ -400,6 +462,7 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
 }
 
 
+
 @Composable
 fun ProfileInfoItem(label: String, value: String) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -407,4 +470,4 @@ fun ProfileInfoItem(label: String, value: String) {
         Text(value, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color.Black)
     }
 }
- 
+
