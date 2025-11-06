@@ -171,7 +171,7 @@ class ChatRepository private constructor(context: Context) {
         }
     }
 
-    // ========== EVENT MANAGEMENT ==========
+    // EVENT MANAGEMENT
     
     // Create a new event
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -354,9 +354,9 @@ class ChatRepository private constructor(context: Context) {
         prefs.edit().remove(KEY_PENDING_EVENT).apply()
     }
 
-    // ========== AI CHATBOT INTEGRATION ==========
+    //  AI CHATBOT INTEGRATION
     
-    // Send message to AI bot and get reply
+
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     suspend fun sendMessageToBot(
         message: String,

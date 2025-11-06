@@ -5,7 +5,6 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { StreamChat } from 'stream-chat';
 import admin from 'firebase-admin';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -27,24 +26,12 @@ if (!STREAM_KEY || !STREAM_SECRET) {
 
 const serverClient = StreamChat.getInstance(STREAM_KEY, STREAM_SECRET);
 
-// Initialize Gemini AI
-let genAI = null;
-let geminiModel = null;
-if (GEMINI_API_KEY) {
-  try {
-    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    // Use gemini-1.5-flash (without -latest suffix, this is the correct format)
-    geminiModel = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7,
-      }
-    });
-    console.log('Gemini AI initialized successfully with gemini-1.5-flash');
-  } catch (e) {
-    console.warn('Failed to initialize Gemini AI:', e.message);
-  }
+// Gemini API configuration (using REST API directly for better compatibility)
+const GEMINI_API_AVAILABLE = !!GEMINI_API_KEY;
+if (GEMINI_API_AVAILABLE) {
+  console.log('Gemini API key configured, bot will use REST API');
+} else {
+  console.warn('Gemini API key not set, bot features will be disabled');
 }
 
 // Initialize Firestore for bot memory (only if Firebase is enabled)
@@ -103,6 +90,71 @@ try {
   }
 } catch (e) {
   console.warn('Failed to initialize Firebase Admin; Firebase auth disabled:', e.message);
+}
+
+// Helper function to call Gemini REST API directly
+async function callGeminiAPI(prompt, conversationHistory = []) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key not configured');
+  }
+
+  // Build the contents array with conversation history
+  const contents = [];
+  
+  // Add system prompt
+  contents.push({
+    role: 'user',
+    parts: [{ text: 'You are an AI Study Assistant helping students learn. Be helpful, encouraging, and concise. Keep responses under 200 words unless asked for detailed explanations.' }]
+  });
+  contents.push({
+    role: 'model',
+    parts: [{ text: 'Understood! I\'m here to help you learn. Ask me anything!' }]
+  });
+  
+  // Add conversation history (last 10 messages)
+  const recentHistory = conversationHistory.slice(-10);
+  for (const msg of recentHistory) {
+    contents.push({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    });
+  }
+  
+  // Add current prompt
+  contents.push({
+    role: 'user',
+    parts: [{ text: prompt }]
+  });
+
+  // Call Gemini REST API
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          maxOutputTokens: 500,
+          temperature: 0.7
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  
+  if (!reply) {
+    throw new Error('No response from Gemini API');
+  }
+
+  return reply;
 }
 
 async function verifyFirebaseIdToken(req, res, next) {
@@ -308,7 +360,7 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: userId, message, channelId' });
     }
 
-    if (!geminiModel) {
+    if (!GEMINI_API_AVAILABLE) {
       return res.status(503).json({ error: 'AI bot is not configured. Please set GEMINI_API_KEY in environment.' });
     }
 
@@ -339,35 +391,8 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
       }
     }
 
-    // Build conversation context for Gemini
-    // Keep last 10 messages to avoid token limits
-    const recentHistory = conversationHistory.slice(-10);
-    
-    // System prompt
-    const systemPrompt = `You are an AI Study Assistant helping students learn. Be helpful, encouraging, and concise. Keep responses under 200 words unless asked for detailed explanations.`;
-    
-    // Build chat history format for Gemini
-    const chatHistory = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Understood! I\'m here to help you learn. Ask me anything!' }] }
-    ];
-    
-    // Add previous conversation
-    for (const msg of recentHistory) {
-      chatHistory.push({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      });
-    }
-
-    // Start chat session with history
-    const chat = geminiModel.startChat({
-      history: chatHistory
-    });
-
-    // Send user's message
-    const result = await chat.sendMessage(message);
-    const botReply = result.response.text();
+    // Call Gemini API using REST
+    const botReply = await callGeminiAPI(message, conversationHistory);
 
     // Save updated conversation history to Firestore
     if (db) {
