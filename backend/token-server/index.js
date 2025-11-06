@@ -407,7 +407,7 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
     try {
       await serverClient.upsertUser({
         id: botUserId,
-        name: 'AI Study Bot',
+        name: 'temp bot',
         image: 'https://cdn-icons-png.flaticon.com/512/4712/4712027.png', // Robot icon
         role: 'user'
       });
