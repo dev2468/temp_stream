@@ -51,6 +51,7 @@ Server runs on http://localhost:8080 by default.
 - **Context-aware**: Uses Gemini 1.5 Flash for fast, intelligent responses
 - **Study Assistant**: Optimized to help students learn
 - **Automatic responses**: Bot replies appear as normal Stream Chat messages
+- **Model**: Uses `gemini-1.5-flash` (latest version, fast and efficient)
 
 ## Security notes
 - Do NOT expose STREAM_SECRET to clients.
