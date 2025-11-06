@@ -2,10 +2,14 @@ package com.example.streamchat.ui.messages
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
+import com.example.streamchat.data.repository.ChatRepository
+import com.google.firebase.auth.FirebaseAuth
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.events.MessageReadEvent
 import io.getstream.chat.android.client.events.NewMessageEvent
@@ -22,6 +26,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.io.File
 
 class MessageListViewModel(
@@ -42,8 +47,14 @@ class MessageListViewModel(
     private val _selectedImages = MutableStateFlow<List<Uri>>(emptyList())
     val selectedImages: StateFlow<List<Uri>> = _selectedImages.asStateFlow()
     val selectedImagesLiveData: LiveData<List<Uri>> = _selectedImages.asLiveData()
+    
+    // Track if user can send messages (for event channels)
+    private val _canSendMessages = MutableStateFlow(true)
+    val canSendMessages: StateFlow<Boolean> = _canSendMessages.asStateFlow()
+    val canSendMessagesLiveData: LiveData<Boolean> = _canSendMessages.asLiveData()
 
     private val channelClient = chatClient.channel(channelId)
+    private val repository = ChatRepository.getInstance(context)
 
     // Debounced refresh control to prevent hitting rate limits
     // IMPORTANT: Declare before init block since it's used during init
@@ -99,6 +110,17 @@ class MessageListViewModel(
                 val result = channelClient.watch().await()
                 if (result.isSuccess) {
                     val channel = result.getOrThrow()
+                    
+                    // Check if this is an event channel and if user is admin
+                    val isEventChannel = channel.extraData["is_event_channel"] as? Boolean == true
+                    if (isEventChannel) {
+                        val eventAdmin = channel.extraData["event_admin"] as? String
+                        val currentUserId = chatClient.getCurrentUser()?.id
+                        _canSendMessages.value = currentUserId == eventAdmin
+                    } else {
+                        _canSendMessages.value = true
+                    }
+                    
                     _uiState.value = MessageListUiState.Success(
                         messages = channel.messages,
                         channelName = channel.name.ifEmpty { "Chat" },
@@ -129,6 +151,19 @@ class MessageListViewModel(
 
         if (text.isBlank() && images.isEmpty()) return
 
+        // Check if message starts with @bot (mention-based bot trigger)
+        val isBotMention = text.trim().startsWith("@bot ", ignoreCase = true)
+        
+        if (isBotMention && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Extract the actual message after @bot
+            val botMessage = text.trim().removePrefix("@bot ").removePrefix("@Bot ").trim()
+            if (botMessage.isNotEmpty()) {
+                sendBotMessage(botMessage)
+                return
+            }
+        }
+
+        // Regular message sending
         viewModelScope.launch {
             try {
                 val message = Message(
@@ -150,6 +185,59 @@ class MessageListViewModel(
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun sendBotMessage(userMessage: String) {
+        viewModelScope.launch {
+            try {
+                // First, send user's message to the channel
+                val userMsg = Message(
+                    cid = channelId,
+                    text = "@bot $userMessage"
+                )
+                channelClient.sendMessage(userMsg).await()
+                
+                // Clear input
+                _messageText.value = ""
+                channelClient.stopTyping().enqueue()
+                
+                // Show "AI Bot is typing..." indicator
+                // (This happens automatically when backend sends typing event)
+                
+                // Get Firebase ID token
+                val firebaseUser = FirebaseAuth.getInstance().currentUser
+                if (firebaseUser == null) {
+                    println("Bot error: User not authenticated")
+                    return@launch
+                }
+                
+                val idToken = firebaseUser.getIdToken(false).await().token
+                if (idToken == null) {
+                    println("Bot error: Failed to get ID token")
+                    return@launch
+                }
+                
+                // Extract channel type and ID from channelId (format: "type:id")
+                val parts = channelId.split(":")
+                val channelType = if (parts.size >= 2) parts[0] else "messaging"
+                val actualChannelId = if (parts.size >= 2) parts[1] else channelId
+                
+                // Call bot API
+                repository.sendMessageToBot(
+                    message = userMessage,
+                    channelId = actualChannelId,
+                    channelType = channelType,
+                    firebaseIdToken = idToken
+                )
+                
+                // Bot response will appear automatically via Stream Chat SDK
+                // No need to manually refresh - the NewMessageEvent will trigger
+            } catch (e: Exception) {
+                e.printStackTrace()
+                println("Bot error: ${e.message}")
             }
         }
     }

@@ -7,12 +7,15 @@ import androidx.annotation.RequiresApi
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.streamchat.R
+import com.example.streamchat.data.model.BotResponse
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.token.TokenProvider
 import io.getstream.chat.android.models.User
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -168,12 +171,246 @@ class ChatRepository private constructor(context: Context) {
         }
     }
 
+    // EVENT MANAGEMENT
+    
+    // Create a new event
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun createEvent(
+        eventName: String,
+        description: String = "",
+        eventDate: Long? = null,
+        coverImage: String = "",
+        firebaseIdToken: String
+    ): com.example.streamchat.data.model.CreateEventResponse = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/events/create"
+        
+        val currentUser = getCurrentUser() 
+            ?: throw IllegalStateException("User not logged in")
+        
+        val requestBody = JSONObject().apply {
+            put("eventName", eventName)
+            put("description", description)
+            if (eventDate != null) put("eventDate", eventDate)
+            put("coverImage", coverImage)
+            put("adminUserId", currentUser.id)
+        }
+        
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .header("Content-Type", "application/json")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+            
+            if (!resp.isSuccessful) {
+                // Try to parse as JSON error, otherwise use plain text
+                val errorMsg = try {
+                    val json = JSONObject(body)
+                    json.optString("error", body)
+                } catch (e: Exception) {
+                    body
+                }
+                throw IllegalStateException("Server error (${resp.code}): $errorMsg")
+            }
+            
+            val json = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                throw IllegalStateException("Invalid JSON response: $body")
+            }
+            
+            com.example.streamchat.data.model.CreateEventResponse(
+                success = json.optBoolean("success", false),
+                eventId = json.optString("eventId"),
+                joinLink = json.optString("joinLink"),
+                channelId = json.optString("channelId"),
+                channelCid = json.optString("channelCid")
+            )
+        }
+    }
+    
+    // Join an event
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun joinEvent(
+        eventId: String,
+        firebaseIdToken: String
+    ): com.example.streamchat.data.model.JoinEventResponse = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/events/join"
+        
+        val currentUser = getCurrentUser() 
+            ?: throw IllegalStateException("User not logged in")
+        
+        val requestBody = JSONObject().apply {
+            put("eventId", eventId)
+            put("userId", currentUser.id)
+        }
+        
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .header("Content-Type", "application/json")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+            
+            if (!resp.isSuccessful) {
+                val errorMsg = try {
+                    val json = JSONObject(body)
+                    json.optString("error", body)
+                } catch (e: Exception) {
+                    body
+                }
+                throw IllegalStateException("Server error (${resp.code}): $errorMsg")
+            }
+            
+            val json = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                throw IllegalStateException("Invalid JSON response: $body")
+            }
+            
+            com.example.streamchat.data.model.JoinEventResponse(
+                success = json.optBoolean("success", false),
+                channelId = json.optString("channelId"),
+                channelCid = json.optString("channelCid")
+            )
+        }
+    }
+    
+    // Get event details
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun getEventDetails(
+        eventId: String,
+        firebaseIdToken: String
+    ): com.example.streamchat.data.model.EventDetailsResponse = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/events/$eventId"
+        
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .get()
+            .build()
+        
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+            
+            if (!resp.isSuccessful) {
+                val errorMsg = try {
+                    val json = JSONObject(body)
+                    json.optString("error", body)
+                } catch (e: Exception) {
+                    body
+                }
+                throw IllegalStateException("Server error (${resp.code}): $errorMsg")
+            }
+            
+            val json = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                throw IllegalStateException("Invalid JSON response: $body")
+            }
+            
+            val eventJson = json.optJSONObject("event")
+            val event = if (eventJson != null) {
+                com.example.streamchat.data.model.Event(
+                    id = eventJson.optString("id"),
+                    name = eventJson.optString("name"),
+                    description = eventJson.optString("description", ""),
+                    adminUserId = eventJson.optString("adminUserId"),
+                    eventDate = if (eventJson.has("eventDate")) eventJson.optLong("eventDate") else null,
+                    coverImage = eventJson.optString("coverImage", ""),
+                    joinLink = eventJson.optString("joinLink"),
+                    channelId = eventJson.optString("id"),
+                    memberCount = eventJson.optInt("memberCount", 0),
+                    createdAt = eventJson.optString("createdAt", "")
+                )
+            } else null
+            
+            com.example.streamchat.data.model.EventDetailsResponse(
+                success = json.optBoolean("success", false),
+                event = event
+            )
+        }
+    }
+    
+    // Store/retrieve pending event link for post-login join
+    fun savePendingEventLink(link: String) {
+        prefs.edit().putString(KEY_PENDING_EVENT, link).apply()
+    }
+    
+    fun getPendingEventLink(): String? {
+        return prefs.getString(KEY_PENDING_EVENT, null)
+    }
+    
+    fun clearPendingEventLink() {
+        prefs.edit().remove(KEY_PENDING_EVENT).apply()
+    }
+
+    //  AI CHATBOT INTEGRATION
+    
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun sendMessageToBot(
+        message: String,
+        channelId: String,
+        channelType: String = "messaging",
+        firebaseIdToken: String
+    ): BotResponse = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/chat/bot"
+        
+        val currentUser = getCurrentUser() 
+            ?: throw IllegalStateException("User not logged in")
+        
+        val requestBody = JSONObject().apply {
+            put("message", message)
+            put("channelId", channelId)
+            put("channelType", channelType)
+            put("userId", currentUser.id)
+        }
+        
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+            
+            if (!resp.isSuccessful) {
+                val errorMsg = try {
+                    val json = JSONObject(body)
+                    json.optString("error", body)
+                } catch (e: Exception) {
+                    body
+                }
+                throw IllegalStateException("Bot error (${resp.code}): $errorMsg")
+            }
+            
+            val json = JSONObject(body)
+            BotResponse(
+                success = json.optBoolean("success", false),
+                reply = json.optString("reply", "")
+            )
+        }
+    }
+
     companion object {
         private const val PREFS_NAME = "stream_chat_prefs"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_IMAGE = "user_image"
         private const val KEY_TOKEN = "user_token"
+        private const val KEY_PENDING_EVENT = "pending_event_link"
 
         @Volatile
         private var instance: ChatRepository? = null

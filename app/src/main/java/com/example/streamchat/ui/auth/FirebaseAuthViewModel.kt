@@ -40,7 +40,7 @@ class FirebaseAuthViewModel(
                 val streamToken = repository.fetchTokenWithFirebaseAuth(idToken, user.uid, fullName)
 
                 val streamUser = User(id = user.uid, name = fullName, image = user.photoUrl?.toString() ?: "")
-                val result = withTimeout(15_000) { chatClient.connectUser(streamUser, streamToken).await() }
+                val result = withTimeout(30_000) { chatClient.connectUser(streamUser, streamToken).await() }
                 if (result.isSuccess) {
                     repository.saveUser(streamUser, streamToken)
                     val tokenProvider = object : TokenProvider { override fun loadToken(): String = streamToken }
@@ -50,7 +50,7 @@ class FirebaseAuthViewModel(
                     _uiState.value = AuthUiState.Error(result.errorOrNull()?.message ?: "Failed to connect to Stream")
                 }
             } catch (e: TimeoutCancellationException) {
-                _uiState.value = AuthUiState.Error("Connection timeout. Check your internet and try again.")
+                _uiState.value = AuthUiState.Error("Connection timed out while establishing secure chat connection. Try another network (no VPN/proxy) and retry.")
             } catch (e: Exception) {
                 _uiState.value = AuthUiState.Error(e.message ?: "Sign in failed")
             }
@@ -71,7 +71,7 @@ class FirebaseAuthViewModel(
                 val streamToken = repository.fetchTokenWithFirebaseAuth(idToken, user.uid, fullName)
 
                 val streamUser = User(id = user.uid, name = fullName, image = user.photoUrl?.toString() ?: "")
-                val result = withTimeout(15_000) { chatClient.connectUser(streamUser, streamToken).await() }
+                val result = withTimeout(30_000) { chatClient.connectUser(streamUser, streamToken).await() }
                 if (result.isSuccess) {
                     repository.saveUser(streamUser, streamToken)
                     val tokenProvider = object : TokenProvider { override fun loadToken(): String = streamToken }
@@ -81,7 +81,7 @@ class FirebaseAuthViewModel(
                     _uiState.value = AuthUiState.Error(result.errorOrNull()?.message ?: "Failed to connect to Stream")
                 }
             } catch (e: TimeoutCancellationException) {
-                _uiState.value = AuthUiState.Error("Connection timeout. Check your internet and try again.")
+                _uiState.value = AuthUiState.Error("Connection timed out while establishing secure chat connection. Try another network (no VPN/proxy) and retry.")
             } catch (e: Exception) {
                 _uiState.value = AuthUiState.Error(e.message ?: "Sign up failed")
             }

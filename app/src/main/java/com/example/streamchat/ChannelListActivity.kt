@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -13,10 +14,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -42,16 +43,14 @@ import com.example.streamchat.ui.channels.ChannelListUiState
 import com.example.streamchat.ui.channels.ChannelListViewModel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.storage.FirebaseStorage
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.models.Channel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
-import com.google.firebase.firestore.FirebaseFirestore
-
-
-
 
 class ChannelListActivity : ComponentActivity() {
 
@@ -90,6 +89,7 @@ class ChannelListActivity : ComponentActivity() {
                             }
                         },
                         onAddClick = { startActivity(Intent(this, FriendListActivity::class.java)) },
+                        onCreateEventClick = { startActivity(Intent(this, CreateEventActivity::class.java)) },
                         onTabSelected = { selectedTab = it }
                     )
 
@@ -114,11 +114,14 @@ fun ChannelListScreen(
     viewModel: ChannelListViewModel,
     onChannelClick: (Channel) -> Unit,
     onAddClick: () -> Unit,
+    onCreateEventClick: () -> Unit,
     onTabSelected: (String) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
-    val filters = listOf("All", "Unread", "Groups", "DMs")
+    var showFabMenu by remember { mutableStateOf(false) }
+
+    val filters = listOf("All", "Unread", "Groups", "DMs", "Events")
     val coda = FontFamily(Font(resId = R.font.coda_extrabold))
 
     Scaffold(
@@ -130,24 +133,57 @@ fun ChannelListScreen(
             }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddClick, containerColor = Color(0xFF0F52BA)) {
-                Icon(Icons.Default.Add, contentDescription = "New chat", tint = Color.White)
+            Column(horizontalAlignment = Alignment.End) {
+                if (showFabMenu) {
+                    FloatingActionButton(
+                        onClick = {
+                            showFabMenu = false
+                            onCreateEventClick()
+                        },
+                        containerColor = Color(0xFF0F52BA),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp)) {
+                            Icon(Icons.Default.Event, contentDescription = "Create Event", tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Create Event", color = Color.White)
+                        }
+                    }
+
+                    FloatingActionButton(
+                        onClick = {
+                            showFabMenu = false
+                            onAddClick()
+                        },
+                        containerColor = Color(0xFF0F52BA),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp)) {
+                            Icon(Icons.Default.Add, contentDescription = "New chat", tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("New Chat", color = Color.White)
+                        }
+                    }
+                }
+
+                FloatingActionButton(
+                    onClick = { showFabMenu = !showFabMenu },
+                    containerColor = Color(0xFF0F52BA)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Menu", tint = Color.White)
+                }
             }
         },
         bottomBar = { BottomNavigationBar(selectedTab = "channels", onTabSelected = onTabSelected) }
     ) { padding ->
-        Box(
-            Modifier.fillMaxSize().padding(padding)
-        ) {
+        Box(Modifier.fillMaxSize().padding(padding)) {
             when (uiState) {
                 is ChannelListUiState.Loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFF0F52BA))
                 }
-
                 is ChannelListUiState.Error -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text((uiState as ChannelListUiState.Error).message, color = Color.Red)
                 }
-
                 is ChannelListUiState.Empty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text("No chats yet — start a new one!", color = Color.Gray)
                 }
@@ -157,6 +193,7 @@ fun ChannelListScreen(
                         "Unread" -> allChannels.filter { (it.extraData["unread_count"] as? Int ?: 0) > 0 }
                         "Groups" -> allChannels.filter { it.memberCount > 2 }
                         "DMs" -> allChannels.filter { it.memberCount <= 2 }
+                        "Events" -> allChannels.filter { it.extraData["is_event_channel"] as? Boolean == true }
                         else -> allChannels
                     }
 
@@ -221,10 +258,7 @@ fun ChannelRow(channel: Channel, onClick: () -> Unit, coda: FontFamily) {
     val isGroup = channel.memberCount > 2
     val otherMember = channel.members.firstOrNull { it.user.id != currentUserId }?.user
     val displayName = when {
-        isGroup -> {
-            val otherMembers = channel.members.filter { it.user.id != currentUserId }.joinToString(", ") { it.user.name.ifEmpty { it.user.id } }
-            channel.name.ifEmpty { otherMembers.ifEmpty { "Unnamed Group" } }
-        }
+        isGroup -> channel.name.ifEmpty { "Unnamed Group" }
         !otherMember?.name.isNullOrBlank() -> otherMember!!.name
         !otherMember?.id.isNullOrBlank() -> otherMember!!.id
         else -> "Unknown"
@@ -273,7 +307,6 @@ fun ChannelRow(channel: Channel, onClick: () -> Unit, coda: FontFamily) {
     }
 }
 
-/* -------------------- BOTTOM NAVIGATION -------------------- */
 @Composable
 fun BottomNavigationBar(selectedTab: String, onTabSelected: (String) -> Unit) {
     NavigationBar(containerColor = Color.White) {
@@ -292,7 +325,6 @@ fun BottomNavigationBar(selectedTab: String, onTabSelected: (String) -> Unit) {
     }
 }
 
-/* -------------------- PROFILE SCREEN -------------------- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (String) -> Unit) {
@@ -311,26 +343,23 @@ fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (Stri
         ProfileContent(user = user, onLogout = onLogout, modifier = Modifier.padding(padding))
     }
 }
+
 @Composable
 fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
     val context = LocalContext.current
     val firestore = FirebaseFirestore.getInstance()
-    val storage = com.google.firebase.storage.FirebaseStorage.getInstance()
+    val storage = FirebaseStorage.getInstance()
     val client = ChatClient.instance()
 
     var username by remember { mutableStateOf<String?>(null) }
     var photoUrl by remember { mutableStateOf(user?.photoUrl?.toString() ?: "") }
 
-    // 🔹 Image Picker for choosing new profile picture
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri ->
+    val imagePicker = rememberLauncherForActivityResult(contract = ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             val uid = user?.uid ?: return@let
             val fileRef = storage.reference.child("profile_images/$uid.jpg")
 
-            // 🔸 Upload file to Firebase Storage
             fileRef.putFile(it)
                 .continueWithTask { task ->
                     if (!task.isSuccessful) throw task.exception ?: Exception("Upload failed")
@@ -340,7 +369,6 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
                     val downloadUrl = downloadUri.toString()
                     photoUrl = downloadUrl
 
-                    // 🔸 Save the image URL to Firestore under users/{uid}/profileImageUrl
                     firestore.collection("users").document(uid)
                         .update("profileImageUrl", downloadUrl)
                         .addOnFailureListener {
@@ -348,7 +376,6 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
                                 .set(mapOf("profileImageUrl" to downloadUrl))
                         }
 
-                    // 🔸 Update Stream user profile
                     val currentUser = client.getCurrentUser()
                     if (currentUser != null) {
                         val updatedUser = currentUser.copy(image = downloadUrl)
@@ -361,7 +388,6 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
         }
     }
 
-    // 🔹 Fetch username + profile from Firestore
     LaunchedEffect(user?.uid) {
         user?.uid?.let { uid ->
             firestore.collection("users").document(uid).get()
@@ -376,43 +402,30 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
     }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .background(Color.White),
+        modifier = modifier.fillMaxSize().verticalScroll(scrollState).background(Color.White),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 🔹 Header with profile image + picker
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .background(Color(0xFF0F52BA)),
+            modifier = Modifier.fillMaxWidth().height(200.dp).background(Color(0xFF0F52BA)),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
-                    modifier = Modifier
-                        .size(110.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.2f))
+                    modifier = Modifier.size(110.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f))
                         .clickable { imagePicker.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
                         model = if (photoUrl.isNotBlank()) photoUrl else R.drawable.ic_person_placeholder,
                         contentDescription = "Profile Image",
-                        modifier = Modifier
-                            .size(100.dp)
-                            .clip(CircleShape)
+                        modifier = Modifier.size(100.dp).clip(CircleShape)
                     )
 
                     Icon(
                         Icons.Default.CameraAlt,
                         contentDescription = "Edit",
                         tint = Color.White,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
+                        modifier = Modifier.align(Alignment.BottomEnd)
                             .size(28.dp)
                             .background(Color(0x80000000), CircleShape)
                             .padding(4.dp)
@@ -420,18 +433,12 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    text = username ?: "Loading...",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Text(text = username ?: "Loading...", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
 
         Spacer(Modifier.height(24.dp))
 
-        // 🔹 Info section
         Column(modifier = Modifier.padding(horizontal = 24.dp)) {
             ProfileInfoItem("Username", username ?: user?.uid?.take(8) ?: "Unknown")
             ProfileInfoItem("Email", user?.email ?: "No email")
@@ -461,8 +468,6 @@ fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier
     }
 }
 
-
-
 @Composable
 fun ProfileInfoItem(label: String, value: String) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -470,4 +475,3 @@ fun ProfileInfoItem(label: String, value: String) {
         Text(value, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color.Black)
     }
 }
-

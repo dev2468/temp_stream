@@ -18,9 +18,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,35 +30,28 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.runtime.livedata.observeAsState
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.ViewModelFactory
 import com.example.streamchat.ui.messages.MessageListUiState
 import com.example.streamchat.ui.messages.MessageListViewModel
 import io.getstream.chat.android.client.ChatClient
+import io.getstream.chat.android.compose.ui.theme.ChatTheme
 import io.getstream.chat.android.models.Message
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.TopAppBar
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
-import io.getstream.chat.android.compose.ui.theme.ChatTheme
-import kotlinx.coroutines.launch
 
 class MessageListActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge + light bars
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.WHITE
         window.navigationBarColor = android.graphics.Color.WHITE
@@ -81,12 +76,15 @@ class MessageListActivity : ComponentActivity() {
                 val uiState by viewModel.uiStateLiveData.observeAsState(MessageListUiState.Loading)
                 val messageText by viewModel.messageTextLiveData.observeAsState("")
                 val selectedImages by viewModel.selectedImagesLiveData.observeAsState(emptyList())
+                val canSendMessages by viewModel.canSendMessagesLiveData.observeAsState(true)
 
                 MessageListScreen(
+                    channelId = channelId,
                     channelName = channelNameFromIntent,
                     uiState = uiState,
                     messageText = messageText,
                     selectedImages = selectedImages,
+                    canSendMessages = canSendMessages,
                     onMessageTextChange = { viewModel.onMessageTextChanged(it) },
                     onSendMessage = { viewModel.sendMessage() },
                     onAddImages = { viewModel.addImages(it) },
@@ -117,10 +115,12 @@ class MessageListActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageListScreen(
+    channelId: String,
     channelName: String,
     uiState: MessageListUiState,
     messageText: String,
     selectedImages: List<android.net.Uri>,
+    canSendMessages: Boolean,
     onMessageTextChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
@@ -129,6 +129,7 @@ fun MessageListScreen(
     onDeleteMessage: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    var showGroupDetails by remember { mutableStateOf(false) }
     val coda = FontFamily(Font(resId = R.font.coda_extrabold))
 
     Scaffold(
@@ -154,24 +155,34 @@ fun MessageListScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
                     }
                 },
-                colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = Color(0xFFFFFFFF))
+                actions = {
+                    IconButton(onClick = { showGroupDetails = true }) {
+                        Icon(Icons.Default.Info, contentDescription = "Group Info", tint = Color.Black)
+                    }
+                },
+                colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = Color.White)
             )
-        },
-        content = { padding ->
+        }
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
             MessageListContent(
                 uiState = uiState,
                 messageText = messageText,
                 selectedImages = selectedImages,
+                canSendMessages = canSendMessages,
                 onMessageTextChange = onMessageTextChange,
                 onSendMessage = onSendMessage,
                 onAddImages = onAddImages,
                 onRemoveImage = onRemoveImage,
                 onReactionClick = onReactionClick,
-                onDeleteMessage = onDeleteMessage,
-                modifier = Modifier.padding(padding)
+                onDeleteMessage = onDeleteMessage
             )
         }
-    )
+    }
+
+    if (showGroupDetails) {
+        GroupDetailsDialog(channelId = channelId, onDismiss = { showGroupDetails = false })
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -180,28 +191,22 @@ fun MessageListContent(
     uiState: MessageListUiState,
     messageText: String,
     selectedImages: List<android.net.Uri>,
+    canSendMessages: Boolean,
     onMessageTextChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
     onRemoveImage: (android.net.Uri) -> Unit,
     onReactionClick: (String, String) -> Unit,
-    onDeleteMessage: (String) -> Unit,
-    modifier: Modifier = Modifier
+    onDeleteMessage: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
-    val imagePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
-    ) { uris -> onAddImages(uris) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        onAddImages(uris)
+    }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.White)
-    ) {
+    Column(Modifier.fillMaxSize().background(Color.White)) {
         Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+            modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
             when (uiState) {
                 is MessageListUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -213,11 +218,8 @@ fun MessageListContent(
                     } else {
                         LazyColumn(
                             state = listState,
-                            reverseLayout = false,
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .navigationBarsPadding(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(8.dp)
                         ) {
                             items(uiState.messages) { message ->
@@ -248,88 +250,148 @@ fun MessageListContent(
             }
         }
 
-        Surface(
-            tonalElevation = 4.dp,
-            shadowElevation = 8.dp,
-            color = Color(0xFFF8F8F8),
-            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
-            modifier = Modifier.fillMaxWidth().imePadding()
-        ) {
-            Column(Modifier.fillMaxWidth()) {
-                if (selectedImages.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(selectedImages) { uri ->
-                            Box(Modifier.size(70.dp)) {
-                                AsyncImage(
-                                    model = uri,
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .fillMaxSize()
-                                )
-                                IconButton(
-                                    onClick = { onRemoveImage(uri) },
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(20.dp)
-                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Remove",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
+        if (!canSendMessages) {
+            Surface(color = Color(0xFFFFF3CD), modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF856404))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Only the event organizer can post messages", color = Color(0xFF856404), fontSize = 14.sp)
+                }
+            }
+        } else {
+            MessageComposer(
+                messageText = messageText,
+                selectedImages = selectedImages,
+                onMessageTextChange = onMessageTextChange,
+                onSendMessage = onSendMessage,
+                onAddImages = { imagePicker.launch("image/*") },
+                onRemoveImage = onRemoveImage
+            )
+        }
+    }
+}
+
+@Composable
+fun MessageComposer(
+    messageText: String,
+    selectedImages: List<android.net.Uri>,
+    onMessageTextChange: (String) -> Unit,
+    onSendMessage: () -> Unit,
+    onAddImages: () -> Unit,
+    onRemoveImage: (android.net.Uri) -> Unit
+) {
+    Surface(
+        tonalElevation = 4.dp,
+        shadowElevation = 8.dp,
+        color = Color(0xFFF8F8F8),
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            if (selectedImages.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(selectedImages) { uri ->
+                        Box(Modifier.size(70.dp)) {
+                            AsyncImage(model = uri, contentDescription = null, modifier = Modifier.clip(RoundedCornerShape(10.dp)).fillMaxSize())
+                            IconButton(
+                                onClick = { onRemoveImage(uri) },
+                                modifier = Modifier.align(Alignment.TopEnd).size(20.dp).background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
                 }
+            }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onAddImages) {
+                    Icon(Icons.Default.AddCircle, contentDescription = "Attach", tint = Color(0xFF0F52BA))
+                }
+
+                OutlinedTextField(
+                    value = messageText,
+                    onValueChange = onMessageTextChange,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    placeholder = { Text("Type a message...", color = Color.Gray) },
+                    shape = RoundedCornerShape(24.dp),
+                    maxLines = 5
+                )
+
+                IconButton(
+                    onClick = onSendMessage,
+                    enabled = messageText.isNotBlank() || selectedImages.isNotEmpty()
                 ) {
-                    IconButton(onClick = { imagePicker.launch("image/*") }) {
-                        Icon(Icons.Default.AddCircle, contentDescription = "Attach", tint = Color(0xFF0F52BA))
-                    }
-
-                    OutlinedTextField(
-                        value = messageText,
-                        onValueChange = onMessageTextChange,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp),
-                        placeholder = { Text("Type a message...", color = Color.Gray) },
-                        shape = RoundedCornerShape(24.dp),
-                        maxLines = 5,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF0F52BA),
-                            unfocusedBorderColor = Color.LightGray,
-                            cursorColor = Color(0xFF0F52BA)
-                        )
+                    Icon(
+                        Icons.Default.Send,
+                        contentDescription = "Send",
+                        tint = if (messageText.isNotBlank() || selectedImages.isNotEmpty()) Color(0xFF0F52BA) else Color.Gray
                     )
-
-                    IconButton(
-                        onClick = onSendMessage,
-                        enabled = messageText.isNotBlank() || selectedImages.isNotEmpty()
-                    ) {
-                        Icon(
-                            Icons.Default.Send,
-                            contentDescription = "Send",
-                            tint = if (messageText.isNotBlank() || selectedImages.isNotEmpty())
-                                Color(0xFF0F52BA) else Color.Gray
-                        )
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun GroupDetailsDialog(channelId: String, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = {}, text = {
+        GroupDetailsContent(channelId = channelId, onClose = onDismiss)
+    })
+}
+
+@Composable
+fun GroupDetailsContent(channelId: String, onClose: () -> Unit) {
+    val client = ChatClient.instance()
+    val scope = rememberCoroutineScope()
+    var createdAt by remember { mutableStateOf<Date?>(null) }
+    var members by remember { mutableStateOf<List<String>>(emptyList()) }
+    var groupName by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(channelId) {
+        scope.launch {
+            val result = client.channel(channelId).watch().await()
+            if (result.isSuccess) {
+                val channel = result.getOrThrow()
+                createdAt = channel.createdAt
+                members = channel.members.map { it.user.name.ifBlank { it.user.id } }
+                groupName = channel.name
+                loading = false
+            } else {
+                error = result.errorOrNull()?.message ?: "Failed to load group details"
+                loading = false
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Group details", fontWeight = FontWeight.Bold)
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }
+        }
+
+        if (loading) CircularProgressIndicator()
+        else if (error != null) Text(error ?: "", color = Color.Red)
+        else {
+            Text("Name: $groupName", fontWeight = FontWeight.Bold)
+            createdAt?.let {
+                Text("Created: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(it))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Members:")
+            members.forEach { Text("• $it") }
         }
     }
 }
@@ -344,88 +406,36 @@ fun MessageItemModern(
     val alignment = if (isOwnMessage) Alignment.End else Alignment.Start
     val bubbleColor = if (isOwnMessage) Color(0xFF0F52BA) else Color(0xFFEFEFEF)
     val textColor = if (isOwnMessage) Color.White else Color.Black
-    val timeColor = if (isOwnMessage) Color.White.copy(alpha = 0.9f) else Color.DarkGray
-    val scope = rememberCoroutineScope()
-
-    // 🔹 Holder for profile image
-    var senderImage by remember { mutableStateOf<String?>(message.user.image) }
-
-    // 🔹 Fetch profile image from Firestore if not own message
-    LaunchedEffect(message.user.id) {
-        if (!isOwnMessage && senderImage.isNullOrEmpty()) {
-            scope.launch {
-                val img = com.example.streamchat.data.repository.UserProfileManager.getUserProfileImage(message.user.id)
-                if (!img.isNullOrEmpty()) senderImage = img
-            }
-        }
-    }
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         horizontalAlignment = alignment
     ) {
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = if (isOwnMessage) Arrangement.End else Arrangement.Start,
-            modifier = Modifier.fillMaxWidth()
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = bubbleColor),
+            modifier = Modifier.defaultMinSize(minWidth = 60.dp)
         ) {
-            // 🔹 Display avatar for messages NOT sent by current user
-            if (!isOwnMessage) {
-                AsyncImage(
-                    model = senderImage ?: R.drawable.ic_person_placeholder,
-                    contentDescription = "Sender profile",
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFDADADA))
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-
-            // 🔹 Chat bubble
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = bubbleColor),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                modifier = Modifier.defaultMinSize(minWidth = 60.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalAlignment = alignment
-                ) {
-                    if (message.text.isNotEmpty()) {
-                        Text(
-                            message.text,
-                            color = textColor,
-                            fontSize = 15.sp
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = alignment) {
+                if (message.text.isNotEmpty()) {
+                    Text(message.text, color = textColor, fontSize = 15.sp)
+                }
+                message.attachments.forEach { attachment ->
+                    if (attachment.type == "image") {
+                        Spacer(Modifier.height(8.dp))
+                        AsyncImage(
+                            model = attachment.imageUrl ?: attachment.upload,
+                            contentDescription = null,
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).fillMaxWidth(0.7f)
                         )
                     }
-
-                    message.attachments.forEach { attachment ->
-                        if (attachment.type == "image") {
-                            Spacer(Modifier.height(8.dp))
-                            AsyncImage(
-                                model = attachment.imageUrl ?: attachment.upload,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .fillMaxWidth(0.7f)
-                            )
-                        }
-                    }
-
-                    // Timestamp (bottom-left inside bubble)
-                    Text(
-                        text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(message.createdAt ?: Date()),
-                        fontSize = 11.sp,
-                        color = timeColor,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .align(Alignment.Start)
-                    )
                 }
+                Text(
+                    text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(message.createdAt ?: Date()),
+                    fontSize = 11.sp,
+                    color = if (isOwnMessage) Color.White.copy(alpha = 0.8f) else Color.DarkGray,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
     }
