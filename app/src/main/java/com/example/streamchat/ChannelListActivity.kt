@@ -3,9 +3,9 @@ package com.example.streamchat
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,8 +14,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.fontResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -36,20 +36,23 @@ import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import com.example.streamchat.data.repository.ChatRepository
 import com.example.streamchat.ui.ViewModelFactory
-
-// <--- IMPORTANT: these imports reference the ViewModel and UI state in your repo --->
 import com.example.streamchat.ui.channels.ChannelListUiState
 import com.example.streamchat.ui.channels.ChannelListViewModel
-
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.models.Channel
-import io.getstream.chat.android.models.User
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
+import java.util.*
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.firestore.FirebaseFirestore
 
-class ChannelListActivity : AppCompatActivity() {
+
+
+
+class ChannelListActivity : ComponentActivity() {
 
     private val viewModel: ChannelListViewModel by viewModels {
         ViewModelFactory(ChatClient.instance(), ChatRepository.getInstance(applicationContext))
@@ -58,42 +61,50 @@ class ChannelListActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ Make layout draw edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // ✅ Force white status & navigation bars (always white, even in dark mode)
         window.statusBarColor = Color.White.toArgb()
         window.navigationBarColor = Color.White.toArgb()
 
-        // ✅ Make system bar icons dark for visibility (battery, clock, etc.)
-        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
-        insetsController.isAppearanceLightStatusBars = true
-        insetsController.isAppearanceLightNavigationBars = true
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
 
         setContent {
-            // ✅ Keep background white to blend seamlessly into status bar
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = Color.White
-            ) {
-                ChannelListScreen(
-                    viewModel = viewModel,
-                    onChannelClick = { channel ->
-                        val cid = channel.cid
-                        if (!cid.isNullOrBlank()) {
-                            startActivity(MessageListActivity.createIntent(this, cid, channel.name ?: ""))
-                        } else {
-                            Log.e("ChannelListActivity", "Channel cid is null for channel: $channel")
-                        }
-                    },
-                    onAddClick = {
-                        startActivity(Intent(this, FriendListActivity::class.java))
-                    }
-                )
+            var selectedTab by remember { mutableStateOf("channels") }
+
+            Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
+                when (selectedTab) {
+                    "channels" -> ChannelListScreen(
+                        viewModel = viewModel,
+                        onChannelClick = { channel ->
+                            val cid = channel.cid
+                            if (!cid.isNullOrBlank()) {
+                                startActivity(
+                                    MessageListActivity.createIntent(
+                                        this, cid, channel.name ?: ""
+                                    )
+                                )
+                            } else {
+                                Log.e("ChannelListActivity", "Channel cid is null: $channel")
+                            }
+                        },
+                        onAddClick = { startActivity(Intent(this, FriendListActivity::class.java)) },
+                        onTabSelected = { selectedTab = it }
+                    )
+
+                    "profile" -> ProfileScreen(
+                        onBack = { selectedTab = "channels" },
+                        onLogout = {
+                            FirebaseAuth.getInstance().signOut()
+                            startActivity(Intent(this, FirebaseAuthActivity::class.java))
+                            finish()
+                        },
+                        onTabSelected = { selectedTab = it }
+                    )
+                }
             }
         }
     }
-
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,25 +112,16 @@ class ChannelListActivity : AppCompatActivity() {
 fun ChannelListScreen(
     viewModel: ChannelListViewModel,
     onChannelClick: (Channel) -> Unit,
-    onAddClick: () -> Unit
+    onAddClick: () -> Unit,
+    onTabSelected: (String) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
     val filters = listOf("All", "Unread", "Groups", "DMs")
-
-    // load channels if needed (ViewModel already does this in init, but safe to refresh)
-    LaunchedEffect(Unit) {
-        // no-op here, ViewModel already loads channels from init
-    }
-
-    // Font resource - make sure res/font/coda_caption.ttf exists
     val coda = FontFamily(Font(resId = R.font.coda_extrabold))
 
     Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.White)
-            .systemBarsPadding(),
+        modifier = Modifier.fillMaxSize().background(Color.White).systemBarsPadding(),
         topBar = {
             Column {
                 TopBarTitle(coda)
@@ -128,30 +130,27 @@ fun ChannelListScreen(
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onAddClick, containerColor = Color(0xFF0F52BA)) {
-                Icon(Icons.Default.Add, contentDescription = "New chat", tint = MaterialTheme.colorScheme.onPrimary)
+                Icon(Icons.Default.Add, contentDescription = "New chat", tint = Color.White)
             }
-        }
+        },
+        bottomBar = { BottomNavigationBar(selectedTab = "channels", onTabSelected = onTabSelected) }
     ) { padding ->
-        Box(modifier = Modifier
-            .fillMaxSize()
-            .padding(padding)
+        Box(
+            Modifier.fillMaxSize().padding(padding)
         ) {
             when (uiState) {
-                is ChannelListUiState.Loading -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color(0xFF0F52BA))
-                    }
+                is ChannelListUiState.Loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF0F52BA))
                 }
-                is ChannelListUiState.Error -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(text = (uiState as ChannelListUiState.Error).message, color = MaterialTheme.colorScheme.error)
-                    }
+
+                is ChannelListUiState.Error -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text((uiState as ChannelListUiState.Error).message, color = Color.Red)
                 }
-                is ChannelListUiState.Empty -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(text = "No chats yet — start a new one!", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+
+                is ChannelListUiState.Empty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text("No chats yet — start a new one!", color = Color.Gray)
                 }
+
                 is ChannelListUiState.Success -> {
                     val allChannels = (uiState as ChannelListUiState.Success).channels
                     val filtered = when (selectedFilter) {
@@ -161,10 +160,10 @@ fun ChannelListScreen(
                         else -> allChannels
                     }
 
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(Modifier.fillMaxSize()) {
                         items(filtered) { channel ->
                             ChannelRow(channel = channel, onClick = { onChannelClick(channel) }, coda)
-                            Divider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+                            Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                         }
                     }
                 }
@@ -176,10 +175,9 @@ fun ChannelListScreen(
 @Composable
 fun TopBarTitle(coda: FontFamily) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
+        Modifier.fillMaxWidth()
             .background(Color.White)
-            .statusBarsPadding() // ✅ pushes text below system bar height
+            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Text(
@@ -187,7 +185,7 @@ fun TopBarTitle(coda: FontFamily) {
             fontFamily = coda,
             fontWeight = FontWeight.ExtraBold,
             fontSize = 34.sp,
-            color = Color.Black, // matches light theme
+            color = Color.Black,
             modifier = Modifier.align(Alignment.CenterStart)
         )
     }
@@ -196,27 +194,21 @@ fun TopBarTitle(coda: FontFamily) {
 @Composable
 fun FilterRow(filters: List<String>, selected: String, onSelected: (String) -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         filters.forEach { f ->
             val isSelected = f == selected
-            val bg by animateColorAsState(if (isSelected) Color(0xFF0F52BA) else MaterialTheme.colorScheme.surface)
-            val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+            val bg by animateColorAsState(if (isSelected) Color(0xFF0F52BA) else Color(0xFFF3F3F3))
+            val textColor = if (isSelected) Color.White else Color.Gray
 
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = bg,
-                tonalElevation = if (isSelected) 4.dp else 0.dp,
-                modifier = Modifier
-                    .height(36.dp)
-                    .wrapContentWidth()
-                    .clickable { onSelected(f) }
+                modifier = Modifier.height(36.dp).wrapContentWidth().clickable { onSelected(f) }
             ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(text = f, color = contentColor, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                    Text(text = f, color = textColor, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }
@@ -227,79 +219,52 @@ fun FilterRow(filters: List<String>, selected: String, onSelected: (String) -> U
 fun ChannelRow(channel: Channel, onClick: () -> Unit, coda: FontFamily) {
     val currentUserId = ChatClient.instance().getCurrentUser()?.id
     val isGroup = channel.memberCount > 2
-
     val otherMember = channel.members.firstOrNull { it.user.id != currentUserId }?.user
     val displayName = when {
-        isGroup -> channel.name.ifEmpty { "Unnamed Group" }
+        isGroup -> {
+            val otherMembers = channel.members.filter { it.user.id != currentUserId }.joinToString(", ") { it.user.name.ifEmpty { it.user.id } }
+            channel.name.ifEmpty { otherMembers.ifEmpty { "Unnamed Group" } }
+        }
         !otherMember?.name.isNullOrBlank() -> otherMember!!.name
         !otherMember?.id.isNullOrBlank() -> otherMember!!.id
         else -> "Unknown"
     }
-    val avatarUrl: String? = if (isGroup) channel.image else otherMember?.image
-
-    // Last message text: try extraData["last_message"] (safe) else fallback
+    val avatarUrl = if (isGroup) channel.image else otherMember?.image
     val lastMessageText = channel.messages.lastOrNull()?.text ?: "No messages yet"
-
-    // Last message time: use lastMessageAt if present
-    val lastMessageTime = channel.lastMessageAt?.let { ts ->
+    val lastMessageTime = channel.lastMessageAt?.let {
         try {
-            val instant = Instant.ofEpochMilli(ts.time)
-            DateTimeFormatter.ofPattern("hh:mm", Locale.getDefault())
-                .withZone(ZoneId.systemDefault())
-                .format(instant)
+            val instant = Instant.ofEpochMilli(it.time)
+            DateTimeFormatter.ofPattern("hh:mm", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(instant)
         } catch (_: Exception) { "" }
     } ?: ""
-
-    // unread badge if provided in extraData
     val unreadCount = (channel.extraData["unread_count"] as? Int) ?: 0
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         AsyncImage(
             model = avatarUrl,
             contentDescription = "avatar",
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+            modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0xFFE0E0E0))
         )
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(displayName, fontFamily = coda, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                if (lastMessageTime.isNotEmpty()) {
-                    Text(lastMessageTime, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                }
+                if (lastMessageTime.isNotEmpty()) Text(lastMessageTime, color = Color.Gray, fontSize = 12.sp)
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
+            Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = lastMessageText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-
+                Text(lastMessageText, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray, modifier = Modifier.weight(1f))
                 if (unreadCount > 0) {
                     Surface(
                         shape = CircleShape,
                         color = Color(0xFF0F52BA),
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .size(22.dp)
+                        modifier = Modifier.padding(start = 8.dp).size(22.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text(text = unreadCount.coerceAtMost(99).toString(), color = MaterialTheme.colorScheme.onPrimary, fontSize = 12.sp)
+                            Text(unreadCount.coerceAtMost(99).toString(), color = Color.White, fontSize = 12.sp)
                         }
                     }
                 }
@@ -307,3 +272,139 @@ fun ChannelRow(channel: Channel, onClick: () -> Unit, coda: FontFamily) {
         }
     }
 }
+
+/* -------------------- BOTTOM NAVIGATION -------------------- */
+@Composable
+fun BottomNavigationBar(selectedTab: String, onTabSelected: (String) -> Unit) {
+    NavigationBar(containerColor = Color.White) {
+        NavigationBarItem(
+            selected = selectedTab == "channels",
+            onClick = { onTabSelected("channels") },
+            icon = { Icon(Icons.Default.Chat, contentDescription = "Channels") },
+            label = { Text("Channels") }
+        )
+        NavigationBarItem(
+            selected = selectedTab == "profile",
+            onClick = { onTabSelected("profile") },
+            icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
+            label = { Text("Profile") }
+        )
+    }
+}
+
+/* -------------------- PROFILE SCREEN -------------------- */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (String) -> Unit) {
+    val auth = FirebaseAuth.getInstance()
+    val user = auth.currentUser
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Profile", fontWeight = FontWeight.Bold, fontSize = 22.sp) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") } }
+            )
+        },
+        bottomBar = { BottomNavigationBar(selectedTab = "profile", onTabSelected = onTabSelected) }
+    ) { padding ->
+        ProfileContent(user = user, onLogout = onLogout, modifier = Modifier.padding(padding))
+    }
+}
+@Composable
+fun ProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier = Modifier) {
+    val scrollState = rememberScrollState()
+    var username by remember { mutableStateOf<String?>(null) }
+
+    // Fetch username from Firebase Realtime Database
+    LaunchedEffect(user?.uid) {
+        user?.uid?.let { uid ->
+            val db = FirebaseFirestore.getInstance()
+            db.collection("users")
+                .document(uid)
+                .get()
+                .addOnSuccessListener { snapshot ->
+                    val fetchedUsername = snapshot.getString("username")
+                    username = fetchedUsername ?: "Unknown"
+                }
+                .addOnFailureListener {
+                    username = "Unknown"
+                }
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .background(Color.White),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Header with theme blue
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .background(Color(0xFF0F52BA)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                AsyncImage(
+                    model = user?.photoUrl ?: "",
+                    contentDescription = "Profile Image",
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f))
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = username ?: "Loading...",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // Info section
+        Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+            ProfileInfoItem("Username", username ?: user?.uid?.take(8) ?: "Unknown")
+            ProfileInfoItem("Email", user?.email ?: "No email")
+
+            Spacer(Modifier.height(24.dp))
+
+            Button(
+                onClick = { user?.email?.let { FirebaseAuth.getInstance().sendPasswordResetEmail(it) } },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F52BA))
+            ) {
+                Text("Change Password", color = Color.White)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = onLogout,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+            ) {
+                Text("Logout", color = Color.White)
+            }
+        }
+    }
+}
+
+
+@Composable
+fun ProfileInfoItem(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(label, color = Color.Gray, fontSize = 14.sp)
+        Text(value, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Color.Black)
+    }
+}
+ 
