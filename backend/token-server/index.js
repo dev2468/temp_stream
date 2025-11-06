@@ -33,7 +33,7 @@ let geminiModel = null;
 if (GEMINI_API_KEY) {
   try {
     genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    geminiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
     console.log('Gemini AI initialized successfully');
   } catch (e) {
     console.warn('Failed to initialize Gemini AI:', e.message);
