@@ -90,9 +90,14 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.3.0")) // 33.4.0 has missing Firestore
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-database-ktx")
+    implementation("com.google.firebase:firebase-storage-ktx")
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }
+ 
