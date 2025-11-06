@@ -187,8 +187,46 @@ app.get('/health', (_req, res) => {
     ok: true,
     stream_key: STREAM_KEY,
     firebase_enabled: firebaseEnabled,
-    firebase_project_id: FIREBASE_PROJECT_ID || undefined
+    firebase_project_id: FIREBASE_PROJECT_ID || undefined,
+    gemini_enabled: GEMINI_API_AVAILABLE
   });
+});
+
+// Test endpoint to list available Gemini models
+app.get('/gemini/models', async (_req, res) => {
+  if (!GEMINI_API_KEY) {
+    return res.status(503).json({ error: 'Gemini API key not configured' });
+  }
+  
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`,
+      { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: errorText });
+    }
+    
+    const data = await response.json();
+    // Filter only models that support generateContent
+    const contentModels = data.models?.filter(m => 
+      m.supportedGenerationMethods?.includes('generateContent')
+    ).map(m => ({
+      name: m.name,
+      displayName: m.displayName,
+      description: m.description,
+      methods: m.supportedGenerationMethods
+    })) || [];
+    
+    res.json({ 
+      available_models: contentModels,
+      count: contentModels.length
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Secondary health endpoint with a different path to avoid any caches and to help identify new deployments
