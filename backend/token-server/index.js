@@ -33,9 +33,15 @@ let geminiModel = null;
 if (GEMINI_API_KEY) {
   try {
     genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    // Use gemini-pro which is the stable production model
-    geminiModel = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    console.log('Gemini AI initialized successfully');
+    // Use gemini-1.5-flash (without -latest suffix, this is the correct format)
+    geminiModel = genAI.getGenerativeModel({ 
+      model: 'gemini-1.5-flash',
+      generationConfig: {
+        maxOutputTokens: 500,
+        temperature: 0.7,
+      }
+    });
+    console.log('Gemini AI initialized successfully with gemini-1.5-flash');
   } catch (e) {
     console.warn('Failed to initialize Gemini AI:', e.message);
   }
@@ -356,11 +362,7 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
 
     // Start chat session with history
     const chat = geminiModel.startChat({
-      history: chatHistory,
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7,
-      }
+      history: chatHistory
     });
 
     // Send user's message
