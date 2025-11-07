@@ -128,7 +128,7 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
 
   // Call Gemini REST API - using gemini-2.0-flash (stable, fast model)
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY},
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -144,12 +144,12 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+    throw new Error(Gemini API error: ${response.status} ${errorText});
   }
 
   const data = await response.json();
   const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  
+
   if (!reply) {
     throw new Error('No response from Gemini API');
   }
@@ -197,21 +197,21 @@ app.get('/gemini/models', async (_req, res) => {
   if (!GEMINI_API_KEY) {
     return res.status(503).json({ error: 'Gemini API key not configured' });
   }
-  
+
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`,
+      https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY},
       { method: 'GET', headers: { 'Content-Type': 'application/json' } }
     );
-    
+
     if (!response.ok) {
       const errorText = await response.text();
       return res.status(response.status).json({ error: errorText });
     }
-    
+
     const data = await response.json();
     // Filter only models that support generateContent
-    const contentModels = data.models?.filter(m => 
+    const contentModels = data.models?.filter(m =>
       m.supportedGenerationMethods?.includes('generateContent')
     ).map(m => ({
       name: m.name,
@@ -219,8 +219,8 @@ app.get('/gemini/models', async (_req, res) => {
       description: m.description,
       methods: m.supportedGenerationMethods
     })) || [];
-    
-    res.json({ 
+
+    res.json({
       available_models: contentModels,
       count: contentModels.length
     });
@@ -270,14 +270,14 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventName, description, eventDate, coverImage } = req.body;
     const adminUserId = req.firebaseUser?.id || req.body.adminUserId;
-    
+
     if (!adminUserId || !eventName) {
       return res.status(400).json({ error: 'Missing required fields: adminUserId, eventName' });
     }
 
     // Generate unique event ID and join link
-    const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const joinLink = `temp://event/${eventId}`;
+    const eventId = event-${Date.now()}-${Math.random().toString(36).substr(2, 9)};
+    const joinLink = temp://event/${eventId};
 
     // Create Stream channel with messaging type (using existing type)
     const channel = serverClient.channel('messaging', eventId, {
@@ -316,13 +316,13 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventId } = req.body;
     const userId = req.firebaseUser?.id || req.body.userId;
-    
+
     if (!eventId || !userId) {
       return res.status(400).json({ error: 'Missing eventId or userId' });
     }
 
     const channel = serverClient.channel('messaging', eventId);
-    
+
     // Check if channel exists
     try {
       await channel.watch();
@@ -437,10 +437,10 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
       try {
         conversationHistory.push({ role: 'user', content: message });
         conversationHistory.push({ role: 'assistant', content: botReply });
-        
+
         // Keep only last 20 messages to prevent unlimited growth
         const trimmedHistory = conversationHistory.slice(-20);
-        
+
         const historyRef = db.collection('chat_memory').doc(userId);
         await historyRef.set({ history: trimmedHistory, updatedAt: new Date() });
       } catch (e) {
@@ -489,7 +489,7 @@ app.post('/webhook/message', async (req, res) => {
 
     const senderId = message?.user?.id;
     if (!senderId) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'No sender ID',
         message: 'rejected'
       });
@@ -498,12 +498,12 @@ app.post('/webhook/message', async (req, res) => {
     // Get channel to check if it's an event channel and check admin
     const channel = serverClient.channel('messaging', channel_id);
     const channelData = await channel.query();
-    
+
     // Only validate if this is an event channel
     if (!channelData.channel.data.is_event_channel) {
       return res.status(200).json({ message: 'allowed' });
     }
-    
+
     const eventAdmin = channelData.channel.data.event_admin;
 
     // Check if sender is the admin
@@ -523,10 +523,10 @@ app.post('/webhook/message', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Token server listening on http://localhost:${PORT}`);
+  console.log(Token server listening on http://localhost:${PORT});
   try {
     const masked = (STREAM_KEY || '').replace(/.(?=.{4})/g, '*');
-    console.log(`[diag] Using Stream API key: ${masked}`);
+    console.log([diag] Using Stream API key: ${masked});
     console.log(`[diag] Firebase enabled: ${firebaseEnabled}${FIREBASE_PROJECT_ID ? ` (project: ${FIREBASE_PROJECT_ID})` : ''}`);
   } catch {}
 });

@@ -204,9 +204,9 @@ fun MessageListScreen(
             }
         }
     ) { padding ->
-    val listState = rememberLazyListState()
-    var messageToConfirmDelete by remember { mutableStateOf<Message?>(null) }
-    val scope = rememberCoroutineScope()
+        val listState = rememberLazyListState()
+        var messageToConfirmDelete by remember { mutableStateOf<Message?>(null) }
+        val scope = rememberCoroutineScope()
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (uiState) {
                 is MessageListUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))

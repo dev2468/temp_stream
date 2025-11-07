@@ -173,7 +173,7 @@ class ChatRepository private constructor(context: Context) {
     }
 
     // EVENT MANAGEMENT
-    
+
     // Create a new event
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     suspend fun createEvent(
@@ -185,10 +185,10 @@ class ChatRepository private constructor(context: Context) {
     ): com.example.streamchat.data.model.CreateEventResponse = withContext(Dispatchers.IO) {
         val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
         val url = "$baseUrl/events/create"
-        
-        val currentUser = getCurrentUser() 
+
+        val currentUser = getCurrentUser()
             ?: throw IllegalStateException("User not logged in")
-        
+
         val requestBody = JSONObject().apply {
             put("eventName", eventName)
             put("description", description)
@@ -196,17 +196,17 @@ class ChatRepository private constructor(context: Context) {
             put("coverImage", coverImage)
             put("adminUserId", currentUser.id)
         }
-        
+
         val req = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $firebaseIdToken")
             .header("Content-Type", "application/json")
             .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        
+
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
-            
+
             if (!resp.isSuccessful) {
                 // Try to parse as JSON error, otherwise use plain text
                 val errorMsg = try {
@@ -217,13 +217,13 @@ class ChatRepository private constructor(context: Context) {
                 }
                 throw IllegalStateException("Server error (${resp.code}): $errorMsg")
             }
-            
+
             val json = try {
                 JSONObject(body)
             } catch (e: Exception) {
                 throw IllegalStateException("Invalid JSON response: $body")
             }
-            
+
             com.example.streamchat.data.model.CreateEventResponse(
                 success = json.optBoolean("success", false),
                 eventId = json.optString("eventId"),
@@ -233,7 +233,7 @@ class ChatRepository private constructor(context: Context) {
             )
         }
     }
-    
+
     // Join an event
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     suspend fun joinEvent(
@@ -242,25 +242,25 @@ class ChatRepository private constructor(context: Context) {
     ): com.example.streamchat.data.model.JoinEventResponse = withContext(Dispatchers.IO) {
         val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
         val url = "$baseUrl/events/join"
-        
-        val currentUser = getCurrentUser() 
+
+        val currentUser = getCurrentUser()
             ?: throw IllegalStateException("User not logged in")
-        
+
         val requestBody = JSONObject().apply {
             put("eventId", eventId)
             put("userId", currentUser.id)
         }
-        
+
         val req = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $firebaseIdToken")
             .header("Content-Type", "application/json")
             .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        
+
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
-            
+
             if (!resp.isSuccessful) {
                 val errorMsg = try {
                     val json = JSONObject(body)
@@ -270,13 +270,13 @@ class ChatRepository private constructor(context: Context) {
                 }
                 throw IllegalStateException("Server error (${resp.code}): $errorMsg")
             }
-            
+
             val json = try {
                 JSONObject(body)
             } catch (e: Exception) {
                 throw IllegalStateException("Invalid JSON response: $body")
             }
-            
+
             com.example.streamchat.data.model.JoinEventResponse(
                 success = json.optBoolean("success", false),
                 channelId = json.optString("channelId"),
@@ -284,7 +284,7 @@ class ChatRepository private constructor(context: Context) {
             )
         }
     }
-    
+
     // Get event details
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     suspend fun getEventDetails(
@@ -293,16 +293,16 @@ class ChatRepository private constructor(context: Context) {
     ): com.example.streamchat.data.model.EventDetailsResponse = withContext(Dispatchers.IO) {
         val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
         val url = "$baseUrl/events/$eventId"
-        
+
         val req = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $firebaseIdToken")
             .get()
             .build()
-        
+
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
-            
+
             if (!resp.isSuccessful) {
                 val errorMsg = try {
                     val json = JSONObject(body)
@@ -312,13 +312,13 @@ class ChatRepository private constructor(context: Context) {
                 }
                 throw IllegalStateException("Server error (${resp.code}): $errorMsg")
             }
-            
+
             val json = try {
                 JSONObject(body)
             } catch (e: Exception) {
                 throw IllegalStateException("Invalid JSON response: $body")
             }
-            
+
             val eventJson = json.optJSONObject("event")
             val event = if (eventJson != null) {
                 com.example.streamchat.data.model.Event(
@@ -334,7 +334,7 @@ class ChatRepository private constructor(context: Context) {
                     createdAt = eventJson.optString("createdAt", "")
                 )
             } else null
-            
+
             com.example.streamchat.data.model.EventDetailsResponse(
                 success = json.optBoolean("success", false),
                 event = event
@@ -373,22 +373,22 @@ class ChatRepository private constructor(context: Context) {
             }
         }
     }
-    
+
     // Store/retrieve pending event link for post-login join
     fun savePendingEventLink(link: String) {
         prefs.edit().putString(KEY_PENDING_EVENT, link).apply()
     }
-    
+
     fun getPendingEventLink(): String? {
         return prefs.getString(KEY_PENDING_EVENT, null)
     }
-    
+
     fun clearPendingEventLink() {
         prefs.edit().remove(KEY_PENDING_EVENT).apply()
     }
 
     //  AI CHATBOT INTEGRATION
-    
+
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     suspend fun sendMessageToBot(
@@ -399,26 +399,26 @@ class ChatRepository private constructor(context: Context) {
     ): BotResponse = withContext(Dispatchers.IO) {
         val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
         val url = "$baseUrl/chat/bot"
-        
-        val currentUser = getCurrentUser() 
+
+        val currentUser = getCurrentUser()
             ?: throw IllegalStateException("User not logged in")
-        
+
         val requestBody = JSONObject().apply {
             put("message", message)
             put("channelId", channelId)
             put("channelType", channelType)
             put("userId", currentUser.id)
         }
-        
+
         val req = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $firebaseIdToken")
             .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        
+
         http.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
-            
+
             if (!resp.isSuccessful) {
                 val errorMsg = try {
                     val json = JSONObject(body)
@@ -428,7 +428,7 @@ class ChatRepository private constructor(context: Context) {
                 }
                 throw IllegalStateException("Bot error (${resp.code}): $errorMsg")
             }
-            
+
             val json = JSONObject(body)
             BotResponse(
                 success = json.optBoolean("success", false),
@@ -512,4 +512,3 @@ class ChatRepository private constructor(context: Context) {
 
 
 }
-
