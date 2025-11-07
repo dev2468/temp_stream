@@ -95,6 +95,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.0")
+    implementation(libs.ui)
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)

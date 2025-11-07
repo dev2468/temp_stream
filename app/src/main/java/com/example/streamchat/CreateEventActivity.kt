@@ -2,28 +2,44 @@ package com.example.streamchat
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.graphics.Shader
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.streamchat.data.repository.ChatRepository
+import com.example.streamchat.data.repository.EventImageManager
 import com.example.streamchat.ui.finishWithSlide
 import com.example.streamchat.ui.startActivityWithSlide
 import com.google.firebase.auth.FirebaseAuth
@@ -32,21 +48,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.*
+import android.graphics.RenderEffect as AndroidRenderEffect
+
+private val accentColor = Color(0xFF0F52BA)
+private val textColor = Color.White
+private val hintColor = Color(0xFFDADADA)
 
 class CreateEventActivity : ComponentActivity() {
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         val repository = ChatRepository.getInstance(applicationContext)
-        
+
         setContent {
             ChatTheme {
                 CreateEventScreen(
                     repository = repository,
                     onBack = { finishWithSlide() },
                     onEventCreated = { eventId, _ ->
-                        // Navigate to Event Details so the organizer can share the join link
                         if (eventId.isNotBlank()) {
                             startActivityWithSlide(EventDetailsActivity.createIntent(this, eventId))
                         } else {
@@ -70,175 +90,298 @@ fun CreateEventScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    
+
     var eventName by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var coverImage by remember { mutableStateOf("") }
     var selectedDate by remember { mutableStateOf<Date?>(null) }
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
     var isCreating by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
-    
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Create Event", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.White,
-                    titleContentColor = Color.Black
-                )
-            )
-        }
-    ) { padding ->
-        Column(
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        imageUri = uri
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // Blurred gradient background
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Event Name
-            OutlinedTextField(
-                value = eventName,
-                onValueChange = { eventName = it },
-                label = { Text("Event Name *") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                isError = eventName.isBlank() && errorMessage != null
-            )
-            
-            // Description
-            OutlinedTextField(
-                value = description,
-                onValueChange = { description = it },
-                label = { Text("Description") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 3,
-                maxLines = 5
-            )
-            
-            // Cover Image URL (optional)
-            OutlinedTextField(
-                value = coverImage,
-                onValueChange = { coverImage = it },
-                label = { Text("Cover Image URL (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            
-            // Date & Time Picker
-            OutlinedButton(
-                onClick = {
-                    val calendar = Calendar.getInstance()
-                    DatePickerDialog(
-                        context,
-                        { _, year, month, day ->
-                            TimePickerDialog(
-                                context,
-                                { _, hour, minute ->
-                                    calendar.set(year, month, day, hour, minute)
-                                    selectedDate = calendar.time
-                                },
-                                calendar.get(Calendar.HOUR_OF_DAY),
-                                calendar.get(Calendar.MINUTE),
-                                false
-                            ).show()
-                        },
-                        calendar.get(Calendar.YEAR),
-                        calendar.get(Calendar.MONTH),
-                        calendar.get(Calendar.DAY_OF_MONTH)
-                    ).show()
-                },
-                modifier = Modifier.fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF0F52BA),
+                            Color(0xFF3B74D3),
+                            Color(0xFFFFFFFF)
+                        )
+                    )
+                )
+                .graphicsLayer {
+                    renderEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        AndroidRenderEffect.createBlurEffect(45f, 45f, Shader.TileMode.CLAMP)
+                            .asComposeRenderEffect()
+                    } else null
+                }
+        )
+
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text("New event", color = textColor, fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = textColor)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                )
+            }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(Icons.Default.CalendarToday, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = selectedDate?.let { dateFormat.format(it) } ?: "Select Date & Time (optional)"
-                )
-            }
-            
-            // Error Message
-            if (errorMessage != null) {
-                Text(
-                    text = errorMessage!!,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 14.sp
-                )
-            }
-            
-            Spacer(Modifier.weight(1f))
-            
-            // Create Button
-            Button(
-                onClick = {
-                    if (eventName.isBlank()) {
-                        errorMessage = "Event name is required"
-                        return@Button
+                Spacer(Modifier.height(12.dp))
+
+                // Cover image
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .clickable(enabled = imageUri == null) { imagePickerLauncher.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (imageUri != null) {
+                        AsyncImage(
+                            model = imageUri,
+                            contentDescription = "Event Cover",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
+                        )
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FrostedMiniButton("Edit", Icons.Default.Edit) {
+                                imagePickerLauncher.launch("image/*")
+                            }
+                            FrostedMiniButton("Remove", Icons.Default.Delete) {
+                                imageUri = null
+                            }
+                        }
+                    } else {
+                        Text("Add cover image", color = textColor, fontWeight = FontWeight.Bold)
                     }
-                    
+                }
+
+                // Event title
+                FrostedBox {
+                    StyledTextField(
+                        value = eventName,
+                        onValueChange = { eventName = it },
+                        placeholder = "Untitled event",
+                        textStyle = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = textColor)
+                    )
+                }
+
+                // Date & Time
+                FrostedBox {
+                    DateTimePickerSection(selectedDate = selectedDate, onDateSelected = { selectedDate = it })
+                }
+
+                // Description
+                Text("Description", color = Color.White.copy(alpha = 0.9f), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                FrostedBox(Modifier.height(120.dp)) {
+                    StyledTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        placeholder = "Add details about your event..."
+                    )
+                }
+
+                // Create button positioned below description
+                Spacer(Modifier.height(32.dp))
+                CreateButton(isCreating = isCreating) {
+                    if (eventName.isBlank()) {
+                        Toast.makeText(context, "Event name is required", Toast.LENGTH_SHORT).show()
+                        return@CreateButton
+                    }
+                    if (selectedDate == null) {
+                        Toast.makeText(context, "Select date and time", Toast.LENGTH_SHORT).show()
+                        return@CreateButton
+                    }
+
                     isCreating = true
-                    errorMessage = null
-                    
                     scope.launch {
                         try {
-                            // Get Firebase ID token
-                            val firebaseUser = FirebaseAuth.getInstance().currentUser
-                            if (firebaseUser == null) {
-                                errorMessage = "Not logged in with Firebase"
+                            val user = FirebaseAuth.getInstance().currentUser
+                            if (user == null) {
+                                Toast.makeText(context, "Not logged in", Toast.LENGTH_SHORT).show()
                                 isCreating = false
                                 return@launch
                             }
-                            
-                            val idToken = firebaseUser.getIdToken(false).await().token
+                            val idToken = user.getIdToken(false).await().token
                             if (idToken == null) {
-                                errorMessage = "Failed to get authentication token"
+                                Toast.makeText(context, "Auth failed", Toast.LENGTH_SHORT).show()
                                 isCreating = false
                                 return@launch
                             }
-                            
+
+                            val uploadedUrl = imageUri?.let { EventImageManager.uploadEventCoverImage(it) }
+
                             val response = repository.createEvent(
                                 eventName = eventName.trim(),
                                 description = description.trim(),
                                 eventDate = selectedDate?.time,
-                                coverImage = coverImage.trim(),
+                                coverImage = uploadedUrl.orEmpty(),
                                 firebaseIdToken = idToken
                             )
-                            
+
+
                             if (response.success) {
+                                Toast.makeText(context, "Event created successfully!", Toast.LENGTH_SHORT).show()
                                 onEventCreated(response.eventId.orEmpty(), response.joinLink)
                             } else {
-                                errorMessage = response.error ?: "Failed to create event"
+                                Toast.makeText(context, response.error ?: "Failed to create event", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
-                            errorMessage = e.message ?: "An error occurred"
+                            Toast.makeText(context, e.message ?: "An error occurred", Toast.LENGTH_SHORT).show()
                         } finally {
                             isCreating = false
                         }
                     }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isCreating,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF0F52BA)
-                )
-            ) {
-                if (isCreating) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(8.dp))
                 }
-                Text(if (isCreating) "Creating..." else "Create Event")
+
+                Spacer(Modifier.height(50.dp))
+            }
+        }
+    }
+}
+
+// Glass-style frosted box
+@Composable
+fun FrostedBox(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.15f))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))),
+        contentAlignment = Alignment.Center
+    ) { content() }
+}
+
+// Small frosted buttons on image
+@Composable
+fun FrostedMiniButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.2f))
+            .clickable(onClick = onClick)
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = label, tint = Color.White)
+            Spacer(Modifier.width(4.dp))
+            Text(label, color = Color.White, fontSize = 14.sp)
+        }
+    }
+}
+
+// Date-time picker
+@Composable
+fun DateTimePickerSection(selectedDate: Date?, onDateSelected: (Date) -> Unit) {
+    val context = LocalContext.current
+    val calendar = Calendar.getInstance()
+    val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
+
+    Column(Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date", tint = Color.White)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Event Date & Time", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(
+                    selectedDate?.let { dateFormat.format(it) } ?: "Select date and time",
+                    color = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.clickable {
+                        DatePickerDialog(
+                            context,
+                            { _, y, m, d ->
+                                TimePickerDialog(
+                                    context,
+                                    { _, h, min ->
+                                        calendar.set(y, m, d, h, min)
+                                        onDateSelected(calendar.time)
+                                    },
+                                    calendar.get(Calendar.HOUR_OF_DAY),
+                                    calendar.get(Calendar.MINUTE),
+                                    false
+                                ).show()
+                            },
+                            calendar.get(Calendar.YEAR),
+                            calendar.get(Calendar.MONTH),
+                            calendar.get(Calendar.DAY_OF_MONTH)
+                        ).show()
+                    }
+                )
+            }
+        }
+    }
+}
+
+// Text field
+@Composable
+fun StyledTextField(value: String, onValueChange: (String) -> Unit, placeholder: String, textStyle: TextStyle = TextStyle(fontSize = 16.sp, color = textColor)) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = textStyle,
+        cursorBrush = SolidColor(textColor),
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        decorationBox = { inner ->
+            if (value.isEmpty()) Text(placeholder, color = hintColor)
+            inner()
+        }
+    )
+}
+
+// Animated Create button
+@Composable
+fun CreateButton(isCreating: Boolean, onClick: () -> Unit) {
+    val scale by animateFloatAsState(targetValue = if (isCreating) 0.96f else 1f, animationSpec = tween(150))
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Button(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer(scaleX = scale, scaleY = scale)
+                .animateContentSize(),
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+        ) {
+            if (isCreating) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), color = accentColor, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Creating...", color = accentColor, fontWeight = FontWeight.Bold)
+            } else {
+                Icon(Icons.Default.Check, null, tint = accentColor)
+                Spacer(Modifier.width(6.dp))
+                Text("Create Event", color = accentColor, fontWeight = FontWeight.Bold)
             }
         }
     }

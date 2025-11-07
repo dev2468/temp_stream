@@ -38,6 +38,10 @@ class ViewModelFactory(
             modelClass.isAssignableFrom(FriendListViewModel::class.java) -> {
                 FriendListViewModel(chatClient) as T
             }
+            modelClass.isAssignableFrom(com.example.streamchat.ui.events.EventListViewModel::class.java) -> {
+                com.example.streamchat.ui.events.EventListViewModel(repository) as T
+            }
+
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
     }
