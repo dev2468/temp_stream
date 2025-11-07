@@ -128,7 +128,7 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
 
   // Call Gemini REST API - using gemini-2.0-flash (stable, fast model)
   const response = await fetch(
-    https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY},
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -144,7 +144,7 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(Gemini API error: ${response.status} ${errorText});
+    throw new Error(`Gemini API error: ${response.status} ${errorText}`);
   }
 
   const data = await response.json();
@@ -200,7 +200,7 @@ app.get('/gemini/models', async (_req, res) => {
 
   try {
     const response = await fetch(
-      https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY},
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`,
       { method: 'GET', headers: { 'Content-Type': 'application/json' } }
     );
 
@@ -276,8 +276,8 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
     }
 
     // Generate unique event ID and join link
-    const eventId = event-${Date.now()}-${Math.random().toString(36).substr(2, 9)};
-    const joinLink = temp://event/${eventId};
+  const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const joinLink = `temp://event/${eventId}`;
 
     // Create Stream channel with messaging type (using existing type)
     const channel = serverClient.channel('messaging', eventId, {
@@ -523,10 +523,10 @@ app.post('/webhook/message', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(Token server listening on http://localhost:${PORT});
+  console.log(`Token server listening on http://localhost:${PORT}`);
   try {
     const masked = (STREAM_KEY || '').replace(/.(?=.{4})/g, '*');
-    console.log([diag] Using Stream API key: ${masked});
+    console.log(`[diag] Using Stream API key: ${masked}`);
     console.log(`[diag] Firebase enabled: ${firebaseEnabled}${FIREBASE_PROJECT_ID ? ` (project: ${FIREBASE_PROJECT_ID})` : ''}`);
   } catch {}
 });
