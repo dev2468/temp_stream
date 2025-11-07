@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +64,9 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
+import kotlin.math.abs
+import kotlin.time.DurationUnit
+import kotlin.time.toDuration
 
 class ChannelListActivity : ComponentActivity() {
 
@@ -135,6 +139,7 @@ fun ChannelListScreen(
 
     val filters = listOf("All", "Unread", "Groups", "DMs")
     val coda = FontFamily(Font(resId = R.font.coda_extrabold))
+    val context = LocalContext.current
 
     Scaffold(
         modifier = Modifier
@@ -143,7 +148,6 @@ fun ChannelListScreen(
             .systemBarsPadding(),
         topBar = {
             Column(modifier = Modifier.background(Color.White)) {
-                // The Top Bar now includes the new "Friends" button
                 TopBarTitle(coda = coda, onAddClick = onAddClick)
                 Box(
                     modifier = Modifier
@@ -173,18 +177,86 @@ fun ChannelListScreen(
                 }
                 is ChannelListUiState.Success -> {
                     val allChannels = (uiState as ChannelListUiState.Success).channels
-                    val filtered = when (selectedFilter) {
-                        "Unread" -> allChannels.filter { (extractUnreadCountSafe(it)) > 0 }
-                        "Groups" -> allChannels.filter { it.memberCount > 2 }
-                        "DMs" -> allChannels.filter { it.memberCount <= 2 }
-                        else -> allChannels
+
+                    // --- extract events (channels flagged as event channels) ---
+                    val eventChannels = allChannels.filter { (it.extraData["is_event_channel"] as? Boolean) == true }
+                    // chats excluding events for the chat list below:
+                    val nonEventChannels = allChannels.filter { (it.extraData["is_event_channel"] as? Boolean) != true }
+
+                    val filteredChats = when (selectedFilter) {
+                        "Unread" -> nonEventChannels.filter { extractUnreadCountSafe(it) > 0 }
+                        "Groups" -> nonEventChannels.filter { it.memberCount > 2 }
+                        "DMs" -> nonEventChannels.filter { it.memberCount <= 2 }
+                        else -> nonEventChannels
                     }
 
+                    // Single LazyColumn containing: events carousel (if any), Chats header, chat rows
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 100.dp) // Space for floating navbar
+                        contentPadding = PaddingValues(bottom = 100.dp) // space for nav
                     ) {
-                        items(filtered) { channel ->
+                        // --- Events carousel block ---
+                        if (eventChannels.isNotEmpty()) {
+                            item {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Events", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                                        // small icon button to go to event creation or full list if you want
+                                        IconButton(onClick = onCreateEventClick) {
+                                            Icon(Icons.Default.Add, contentDescription = "Create Event", tint = Color(0xFF0F52BA))
+                                        }
+                                    }
+
+                                    LazyRow(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(end = 16.dp)
+                                    ) {
+                                        items(eventChannels) { eventChannel ->
+                                            EventCardFromChannel(eventChannel) {
+                                                // route to details if channel has join link or event id in extraData
+                                                val cid = eventChannel.cid
+                                                if (!cid.isNullOrBlank()) {
+                                                    // If event created a channel and stored event id in extraData, prefer eventDetails
+                                                    val eventId = eventChannel.extraData["event_id"] as? String
+                                                    if (!eventId.isNullOrBlank()) {
+                                                        context.startActivity(EventDetailsActivity.createIntent(context, eventId))
+                                                    } else {
+                                                        // fallback to opening the channel chat
+                                                        context.startActivity(
+                                                            MessageListActivity.createIntent(context, cid, eventChannel.name ?: "")
+                                                        )
+                                                    }
+                                                } else {
+                                                    // fallback behavior
+                                                    Log.w("ChannelList", "Event clicked but no cid present: $eventChannel")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
+
+                        // --- Chats header ---
+                        item {
+                            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                Text("Chats", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                            }
+                        }
+
+                        // --- Chat items ---
+                        items(filteredChats) { channel ->
                             ChannelRow(channel = channel, onClick = { onChannelClick(channel) }, coda)
                             Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                         }
@@ -192,7 +264,7 @@ fun ChannelListScreen(
                 }
             }
 
-            // Floating navigation bar aligned to the bottom
+            // Floating navigation bar aligned to the bottom (keeps same API)
             PillBottomNav(
                 modifier = Modifier.align(Alignment.BottomCenter),
                 selectedTab = "channels",
@@ -204,9 +276,85 @@ fun ChannelListScreen(
     }
 }
 
+/** Event card visual created from a channel that represents an event.
+ *
+ * Uses possible extraData keys:
+ *  - "event_date" (Long milliseconds) to show days left
+ *  - "is_event_channel" (Boolean) to mark event channels (we already filter on this)
+ *  - "event_id" (String) fallback to open event detail page if present
+ */
+@Composable
+fun EventCardFromChannel(channel: Channel, onClick: () -> Unit) {
+    val name = channel.name.ifEmpty { channel.id ?: "Event" }
+    val cover = channel.image ?: channel.extraData["coverImage"] as? String
+    val eventDateMillis = (channel.extraData["event_date"] as? Number)?.toLong()
+    val daysText = remember(eventDateMillis) {
+        eventDateMillis?.let {
+            val now = System.currentTimeMillis()
+            val diff = it - now
+            val days = (diff.toDuration(DurationUnit.MILLISECONDS).toLong(DurationUnit.DAYS))
+            when {
+                diff <= 0L -> "Today"
+                days <= 1L -> "${abs(days)} day"
+                else -> "${abs(days)} days"
+            }
+        } ?: ""
+    }
+
+    Box(
+        modifier = Modifier
+            .width(280.dp)
+            .height(160.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+    ) {
+        if (!cover.isNullOrBlank()) {
+            AsyncImage(
+                model = cover,
+                contentDescription = name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            // placeholder background if no cover
+            Box(modifier = Modifier.fillMaxSize().background(Color(0xFFeceff1)))
+        }
+
+        // gradient overlay for readability
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0x00000000), Color(0xAA000000)),
+                        startY = 60f
+                    )
+                )
+        )
+
+        // title and badge
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(12.dp)
+        ) {
+            Text(name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(6.dp))
+            if (daysText.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF0F52BA),
+                    tonalElevation = 2.dp
+                ) {
+                    Text(daysText, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color.White, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
-    // Refactored into a Row to accommodate the new button
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -214,7 +362,7 @@ fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
             .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween // Pushes items to the ends
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = "Chats",
@@ -224,10 +372,9 @@ fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
             color = Color.Black
         )
 
-        // New "Friends" button
         Surface(
             onClick = onAddClick,
-            shape = RoundedCornerShape(50), // Pill shape
+            shape = RoundedCornerShape(50),
             color = Color(0xFF0F52BA)
         ) {
             Row(
@@ -235,7 +382,7 @@ fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    Icons.Default.Group, // Friends icon
+                    Icons.Default.Group,
                     contentDescription = "Friends",
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
@@ -368,6 +515,7 @@ fun extractUnreadCountSafe(channel: Channel): Int {
     }
 }
 
+// your PillBottomNav kept as-is (glassified earlier)
 @Composable
 fun PillBottomNav(
     modifier: Modifier = Modifier,
@@ -470,8 +618,7 @@ fun PillBottomNav(
     }
 }
 
-
-
+// Profile screen and supporting composables unchanged below
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (String) -> Unit, onCreateEventClick: () -> Unit) {
@@ -504,7 +651,6 @@ fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (Stri
         }
     }
 }
-
 
 @Composable
 fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier = Modifier) {
@@ -631,6 +777,7 @@ fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Mo
         Spacer(Modifier.height(120.dp))
     }
 }
+
 @Composable
 fun ProfileGlassItem(label: String, value: String, icon: ImageVector) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
@@ -657,7 +804,6 @@ fun ProfileGlassButton(label: String, icon: ImageVector, tint: Color = Color.Whi
     }
 }
 
-
 @Composable
 fun ProfileHeader(
     username: String?,
@@ -669,7 +815,7 @@ fun ProfileHeader(
         modifier = Modifier
             .fillMaxWidth()
             .height(240.dp)
-            .background(Color(0xFF0F52BA)), // Primary color for the header
+            .background(Color(0xFF0F52BA)),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -691,7 +837,6 @@ fun ProfileHeader(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    // Edit icon overlay
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)

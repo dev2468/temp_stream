@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import kotlinx.coroutines.launch
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -99,9 +100,7 @@ class MessageListActivity : ComponentActivity() {
                     onSendMessage = { viewModel.sendMessage() },
                     onAddImages = { viewModel.addImages(it) },
                     onRemoveImage = { viewModel.removeImage(it) },
-                    onLocalDelete = { message -> viewModel.markMessageLocallyDeleted(message.id) },
                     onDeleteMessage = { message -> viewModel.deleteMessage(message.id) },
-                    onRestoreMessage = { message -> viewModel.restoreLocalMessage(message) },
                     onReplyMessage = { message -> viewModel.setReplyToMessage(message) },
                     replyPreview = replyPreview,
                     onCancelReply = { viewModel.clearReply() },
@@ -137,9 +136,7 @@ fun MessageListScreen(
     onSendMessage: () -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
     onRemoveImage: (android.net.Uri) -> Unit,
-    onLocalDelete: (Message) -> Unit,
     onDeleteMessage: (Message) -> Unit,
-    onRestoreMessage: (Message) -> Unit,
     onReplyMessage: (Message) -> Unit,
     replyPreview: Pair<String, String>? = null,
     onCancelReply: () -> Unit,
@@ -208,8 +205,7 @@ fun MessageListScreen(
         }
     ) { padding ->
         val listState = rememberLazyListState()
-        // pendingDeletes map stores the original Message so we can restore it on Undo
-        val pendingDeletes = remember { mutableStateMapOf<String, Message>() }
+        var messageToConfirmDelete by remember { mutableStateOf<Message?>(null) }
         val scope = rememberCoroutineScope()
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (uiState) {
@@ -233,33 +229,13 @@ fun MessageListScreen(
                                 contentPadding = PaddingValues(8.dp)
                             ) {
                                 items(uiState.messages, key = { it.id }) { message ->
-                                    // if deletion is pending for this message, hide it locally until snackbar resolves
-                                    if (pendingDeletes.containsKey(message.id)) return@items
 
                                     MessageItemModern(
                                         message = message,
                                         isOwnMessage = message.user.id == ChatClient.instance().getCurrentUser()?.id,
                                         onDeleteClick = {
-                                            // mark pending delete locally and remove from UI immediately
-                                            pendingDeletes[message.id] = message
-                                            onLocalDelete(message)
-
-                                            scope.launch {
-                                                val result = snackbarHostState.showSnackbar(
-                                                    message = "Message deleted",
-                                                    actionLabel = "Undo",
-                                                    duration = SnackbarDuration.Short
-                                                )
-                                                if (result == SnackbarResult.ActionPerformed) {
-                                                    // user undid: restore locally
-                                                    pendingDeletes.remove(message.id)
-                                                    onRestoreMessage(message)
-                                                } else {
-                                                    // finalise delete on server and remove pending entry
-                                                    onDeleteMessage(message)
-                                                    pendingDeletes.remove(message.id)
-                                                }
-                                            }
+                                            // ask user to confirm deletion
+                                            messageToConfirmDelete = message
                                         },
                                         onReplyClick = { onReplyMessage(message) }
                                     )
@@ -274,7 +250,27 @@ fun MessageListScreen(
                         }
                     }
                 }
+
                 is MessageListUiState.Error -> Text(text = uiState.message, color = Color.Red, modifier = Modifier.align(Alignment.Center))
+            }
+
+            // Confirmation dialog for delete
+            messageToConfirmDelete?.let { msg ->
+                AlertDialog(
+                    onDismissRequest = { messageToConfirmDelete = null },
+                    title = { Text("Delete message") },
+                    text = { Text("Are you sure you want to delete this message? This action cannot be undone.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            // call delete immediately
+                            onDeleteMessage(msg)
+                            messageToConfirmDelete = null
+                        }) { Text("Delete") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { messageToConfirmDelete = null }) { Text("Cancel") }
+                    }
+                )
             }
         }
     }
