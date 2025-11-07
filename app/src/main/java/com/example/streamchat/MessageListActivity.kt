@@ -136,7 +136,7 @@ fun MessageListScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.White)
-            .systemBarsPadding(),
+            .systemBarsPadding().imePadding(),
         topBar = {
             SmallTopAppBar(
                 title = {
@@ -200,11 +200,12 @@ fun MessageListContent(
     onDeleteMessage: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
+    
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         onAddImages(uris)
     }
 
-    Column(Modifier.fillMaxSize().background(Color.White)) {
+    Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth()
         ) {

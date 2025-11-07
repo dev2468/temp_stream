@@ -12,6 +12,7 @@ constraintlayout = "2.1.4"
 googleServices = "4.4.2"
 firebaseBom = "33.4.0"
 firebaseFirestoreKtx = "26.0.2"
+ui = "1.9.4"
 
 [libraries]
 # Stream Chat SDK
@@ -32,6 +33,7 @@ constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayo
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-auth-ktx = { group = "com.google.firebase", name = "firebase-auth-ktx" }
 firebase-firestore-ktx = { group = "com.google.firebase", name = "firebase-firestore-ktx", version.ref = "firebaseFirestoreKtx" }
+ui = { group = "androidx.compose.ui", name = "ui", version.ref = "ui" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

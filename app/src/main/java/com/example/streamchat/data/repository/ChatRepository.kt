@@ -8,6 +8,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.streamchat.R
 import com.example.streamchat.data.model.BotResponse
+import com.example.streamchat.data.model.Event
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.token.TokenProvider
 import io.getstream.chat.android.models.User
@@ -421,4 +422,62 @@ class ChatRepository private constructor(context: Context) {
             }
         }
     }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun getAllEvents(firebaseIdToken: String): List<Event> = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/events/all"
+
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .get()
+            .build()
+
+        try {
+            http.newCall(req).execute().use { resp ->
+                val body = resp.body?.string() ?: throw IllegalStateException("Empty response")
+
+                if (!resp.isSuccessful) {
+                    val errorMsg = try {
+                        val json = JSONObject(body)
+                        json.optString("error", body)
+                    } catch (e: Exception) {
+                        body
+                    }
+                    throw IllegalStateException("Server error (${resp.code}): $errorMsg")
+                }
+
+                val json = JSONObject(body)
+                val eventsArray = json.optJSONArray("events") ?: return@withContext emptyList<Event>()
+
+                val events = mutableListOf<Event>()
+                for (i in 0 until eventsArray.length()) {
+                    val e = eventsArray.getJSONObject(i)
+                    val event = Event(
+                        id = e.optString("id"),
+                        name = e.optString("name"),
+                        description = e.optString("description", ""),
+                        adminUserId = e.optString("adminUserId"),
+                        eventDate = if (e.has("eventDate")) e.optLong("eventDate") else null,
+                        coverImage = e.optString("coverImage", ""),
+                        joinLink = e.optString("joinLink"),
+                        channelId = e.optString("channelId"),
+                        channelCid = e.optString("channelCid"),
+                        memberCount = e.optInt("memberCount", 0),
+                        createdAt = e.optString("createdAt", "")
+                    )
+                    events.add(event)
+                }
+
+                events
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList<Event>()
+        }
+    }
+
+
 }
+
