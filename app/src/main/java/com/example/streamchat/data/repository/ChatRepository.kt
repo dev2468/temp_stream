@@ -340,6 +340,38 @@ class ChatRepository private constructor(context: Context) {
             )
         }
     }
+
+    // Delete a message using the backend token-server (server-side delete)
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    suspend fun deleteMessageOnServer(firebaseIdToken: String, messageId: String): Boolean = withContext(Dispatchers.IO) {
+        val baseUrl = appContext.getString(R.string.backend_base_url).trimEnd('/')
+        val url = "$baseUrl/messages/delete"
+
+        val requestBody = JSONObject().apply {
+            put("messageId", messageId)
+        }
+
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $firebaseIdToken")
+            .header("Content-Type", "application/json")
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) {
+                val errorMsg = try { JSONObject(body).optString("error", body) } catch (e: Exception) { body }
+                throw IllegalStateException("Server error (${resp.code}): $errorMsg")
+            }
+            return@withContext try {
+                val json = JSONObject(body)
+                json.optBoolean("success", false)
+            } catch (e: Exception) {
+                true
+            }
+        }
+    }
     
     // Store/retrieve pending event link for post-login join
     fun savePendingEventLink(link: String) {

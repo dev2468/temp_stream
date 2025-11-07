@@ -15,6 +15,8 @@ import io.getstream.chat.android.client.events.MessageReadEvent
 import io.getstream.chat.android.client.events.NewMessageEvent
 import io.getstream.chat.android.client.events.ReactionNewEvent
 import io.getstream.chat.android.client.events.ReactionDeletedEvent
+import io.getstream.chat.android.client.events.TypingStartEvent
+import io.getstream.chat.android.client.events.TypingStopEvent
 import io.getstream.chat.android.models.Attachment
 import io.getstream.chat.android.models.Message
 import io.getstream.chat.android.models.Reaction
@@ -26,8 +28,10 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import android.util.Log
 import kotlinx.coroutines.tasks.await
 import java.io.File
+import java.util.Date
 
 class MessageListViewModel(
     private val chatClient: ChatClient,
@@ -47,6 +51,11 @@ class MessageListViewModel(
     private val _selectedImages = MutableStateFlow<List<Uri>>(emptyList())
     val selectedImages: StateFlow<List<Uri>> = _selectedImages.asStateFlow()
     val selectedImagesLiveData: LiveData<List<Uri>> = _selectedImages.asLiveData()
+    
+    // Reply-to state: holds (username, previewText)
+    private val _replyPreview = MutableStateFlow<Pair<String, String>?>(null)
+    val replyPreviewLiveData: LiveData<Pair<String, String>?> = _replyPreview.asLiveData()
+    private var _replyToMessageId: String? = null
     
     // Track if user can send messages (for event channels)
     private val _canSendMessages = MutableStateFlow(true)
@@ -83,6 +92,29 @@ class MessageListViewModel(
                 is ReactionDeletedEvent -> {
                     if (event.cid == channelId) {
                         _refreshSignals.tryEmit(Unit)
+                    }
+                }
+                is TypingStartEvent -> {
+                    if (event.cid == channelId) {
+                        // update typing users
+                        val current = (_uiState.value as? MessageListUiState.Success)?.typingUsers?.toMutableList() ?: mutableListOf()
+                        val name = event.user?.name ?: event.user?.id ?: "Someone"
+                        if (!current.contains(name)) current.add(name)
+                        val curState = _uiState.value
+                        if (curState is MessageListUiState.Success) {
+                            _uiState.value = curState.copy(typingUsers = current)
+                        }
+                    }
+                }
+                is TypingStopEvent -> {
+                    if (event.cid == channelId) {
+                        val current = (_uiState.value as? MessageListUiState.Success)?.typingUsers?.toMutableList() ?: mutableListOf()
+                        val name = event.user?.name ?: event.user?.id ?: "Someone"
+                        current.remove(name)
+                        val curState = _uiState.value
+                        if (curState is MessageListUiState.Success) {
+                            _uiState.value = curState.copy(typingUsers = current)
+                        }
                     }
                 }
                 is MessageReadEvent -> {
@@ -166,9 +198,15 @@ class MessageListViewModel(
         // Regular message sending
         viewModelScope.launch {
             try {
+                // If replying, prefix message text with small quoted context
+                val finalText = if (_replyToMessageId != null && _replyPreview.value != null) {
+                    val (author, preview) = _replyPreview.value!!
+                    "↪ $author: $preview\n$text"
+                } else text
+
                 val message = Message(
                     cid = channelId,
-                    text = text,
+                    text = finalText,
                     attachments = images.mapNotNull { uri ->
                         uriToFile(uri)?.let { file ->
                             Attachment(upload = file, type = "image")
@@ -181,12 +219,27 @@ class MessageListViewModel(
                     _messageText.value = ""
                     _selectedImages.value = emptyList()
                     channelClient.stopTyping().enqueue()
+                    // clear reply state on success
+                    _replyPreview.value = null
+                    _replyToMessageId = null
                     // No need to manually reload, observeChannelState will handle it
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+    }
+
+    fun setReplyToMessage(message: Message) {
+        _replyToMessageId = message.id
+        val name = message.user.name.ifBlank { message.user.id }
+        val preview = message.text.take(80)
+        _replyPreview.value = Pair(name, preview)
+    }
+
+    fun clearReply() {
+        _replyToMessageId = null
+        _replyPreview.value = null
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -259,11 +312,66 @@ class MessageListViewModel(
     fun deleteMessage(messageId: String) {
         viewModelScope.launch {
             try {
-                channelClient.deleteMessage(messageId).await()
-                // No need to manually reload, observeChannelState will handle it
+                Log.d("MessageListViewModel", "Attempting to delete message (server): $messageId")
+
+                // Try server-side deletion via backend token-server using Firebase ID token
+                val firebaseUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                val idToken = firebaseUser?.getIdToken(false)?.await()?.token
+
+                val deletedOnServer = if (idToken != null) {
+                    try {
+                        repository.deleteMessageOnServer(idToken, messageId)
+                    } catch (e: Exception) {
+                        Log.w("MessageListViewModel", "Server delete failed, falling back to client delete: ${e.message}")
+                        false
+                    }
+                } else false
+
+                if (deletedOnServer) {
+                    Log.d("MessageListViewModel", "Server delete succeeded for: $messageId")
+                    val cur = _uiState.value
+                    if (cur is MessageListUiState.Success) {
+                        _uiState.value = cur.copy(messages = cur.messages.filter { it.id != messageId })
+                    }
+                } else {
+                    // Fall back to client delete (may fail due to permissions)
+                    Log.d("MessageListViewModel", "Attempting client-side delete for: $messageId")
+                    val result = channelClient.deleteMessage(messageId).await()
+                    if (result.isSuccess) {
+                        Log.d("MessageListViewModel", "Client delete succeeded for: $messageId")
+                        val cur = _uiState.value
+                        if (cur is MessageListUiState.Success) {
+                            _uiState.value = cur.copy(messages = cur.messages.filter { it.id != messageId })
+                        }
+                    } else {
+                        Log.w("MessageListViewModel", "Client delete failed for $messageId: ${result.errorOrNull()?.message}")
+                    }
+                }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("MessageListViewModel", "Exception deleting message $messageId", e)
             }
+        }
+    }
+
+    /**
+     * Mark the message as locally deleted (remove from UI) without calling server delete yet.
+     * This lets us show an immediate remove and allow Undo before finalizing on server.
+     */
+    fun markMessageLocallyDeleted(messageId: String) {
+        val cur = _uiState.value
+        if (cur is MessageListUiState.Success) {
+            _uiState.value = cur.copy(messages = cur.messages.filter { it.id != messageId })
+        }
+    }
+
+    /**
+     * Restore a locally removed message back into the UI (used when Undo is pressed).
+     */
+    fun restoreLocalMessage(message: Message) {
+        val cur = _uiState.value
+        if (cur is MessageListUiState.Success) {
+            val merged = (cur.messages + message).sortedBy { it.createdAt ?: Date(0) }
+            _uiState.value = cur.copy(messages = merged)
         }
     }
 

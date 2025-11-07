@@ -9,8 +9,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -21,6 +22,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import kotlinx.coroutines.launch
+import android.util.Log
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -77,6 +87,7 @@ class MessageListActivity : ComponentActivity() {
                 val messageText by viewModel.messageTextLiveData.observeAsState("")
                 val selectedImages by viewModel.selectedImagesLiveData.observeAsState(emptyList())
                 val canSendMessages by viewModel.canSendMessagesLiveData.observeAsState(true)
+                val replyPreview by viewModel.replyPreviewLiveData.observeAsState(null)
 
                 MessageListScreen(
                     channelId = channelId,
@@ -89,10 +100,10 @@ class MessageListActivity : ComponentActivity() {
                     onSendMessage = { viewModel.sendMessage() },
                     onAddImages = { viewModel.addImages(it) },
                     onRemoveImage = { viewModel.removeImage(it) },
-                    onReactionClick = { messageId, reaction ->
-                        viewModel.addReaction(messageId, reaction)
-                    },
-                    onDeleteMessage = { viewModel.deleteMessage(it) },
+                    onDeleteMessage = { message -> viewModel.deleteMessage(message.id) },
+                    onReplyMessage = { message -> viewModel.setReplyToMessage(message) },
+                    replyPreview = replyPreview,
+                    onCancelReply = { viewModel.clearReply() },
                     onBack = { finish() }
                 )
             }
@@ -125,14 +136,28 @@ fun MessageListScreen(
     onSendMessage: () -> Unit,
     onAddImages: (List<android.net.Uri>) -> Unit,
     onRemoveImage: (android.net.Uri) -> Unit,
-    onReactionClick: (String, String) -> Unit,
-    onDeleteMessage: (String) -> Unit,
+    onDeleteMessage: (Message) -> Unit,
+    onReplyMessage: (Message) -> Unit,
+    replyPreview: Pair<String, String>? = null,
+    onCancelReply: () -> Unit,
     onBack: () -> Unit
 ) {
     var showGroupDetails by remember { mutableStateOf(false) }
-    val coda = FontFamily(Font(resId = R.font.coda_extrabold))
+    val coda = try {
+        FontFamily(Font(resId = R.font.coda_extrabold))
+    } catch (_: Exception) {
+        FontFamily.Default
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        onAddImages(uris)
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         modifier = Modifier
             .fillMaxSize()
             .background(Color.White)
@@ -162,116 +187,96 @@ fun MessageListScreen(
                 },
                 colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = Color.White)
             )
+        },
+        bottomBar = {
+            Box(Modifier.fillMaxWidth().imePadding()) {
+                MessageComposer(
+                    messageText = messageText,
+                    selectedImages = selectedImages,
+                    onMessageTextChange = onMessageTextChange,
+                    onSendMessage = onSendMessage,
+                    onAddImages = { imagePicker.launch("image/*") },
+                    onRemoveImage = onRemoveImage,
+                    modifier = Modifier.fillMaxWidth(),
+                    replyPreview = replyPreview,
+                    onCancelReply = onCancelReply
+                )
+            }
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            MessageListContent(
-                uiState = uiState,
-                messageText = messageText,
-                selectedImages = selectedImages,
-                canSendMessages = canSendMessages,
-                onMessageTextChange = onMessageTextChange,
-                onSendMessage = onSendMessage,
-                onAddImages = onAddImages,
-                onRemoveImage = onRemoveImage,
-                onReactionClick = onReactionClick,
-                onDeleteMessage = onDeleteMessage
-            )
-        }
-    }
-
-    if (showGroupDetails) {
-        GroupDetailsDialog(channelId = channelId, onDismiss = { showGroupDetails = false })
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MessageListContent(
-    uiState: MessageListUiState,
-    messageText: String,
-    selectedImages: List<android.net.Uri>,
-    canSendMessages: Boolean,
-    onMessageTextChange: (String) -> Unit,
-    onSendMessage: () -> Unit,
-    onAddImages: (List<android.net.Uri>) -> Unit,
-    onRemoveImage: (android.net.Uri) -> Unit,
-    onReactionClick: (String, String) -> Unit,
-    onDeleteMessage: (String) -> Unit
-) {
     val listState = rememberLazyListState()
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        onAddImages(uris)
-    }
-
-    Column(Modifier.fillMaxSize().background(Color.White)) {
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        ) {
+    var messageToConfirmDelete by remember { mutableStateOf<Message?>(null) }
+    val scope = rememberCoroutineScope()
+        Box(Modifier.fillMaxSize().padding(padding)) {
             when (uiState) {
                 is MessageListUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 is MessageListUiState.Success -> {
                     if (uiState.messages.isEmpty()) {
-                        Box(Modifier.align(Alignment.Center)) {
-                            Text("Start a conversation!", color = Color.Gray)
-                        }
+                        Box(Modifier.align(Alignment.Center)) { Text("Start a conversation!", color = Color.Gray) }
                     } else {
-                        LazyColumn(
-                            state = listState,
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(8.dp)
-                        ) {
-                            items(uiState.messages) { message ->
-                                MessageItemModern(
-                                    message = message,
-                                    isOwnMessage = message.user.id == ChatClient.instance().getCurrentUser()?.id,
-                                    onReactionClick = { emoji ->
-                                        onReactionClick(message.id, emoji)
-                                    },
-                                    onDeleteClick = { onDeleteMessage(message.id) }
-                                )
+                        Column(Modifier.fillMaxSize()) {
+                            // typing indicator
+                            if (uiState.typingUsers.isNotEmpty()) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(text = "${uiState.typingUsers.joinToString(", ")} typing...", color = Color.Gray, fontSize = 13.sp)
+                                }
                             }
-                        }
 
-                        LaunchedEffect(uiState.messages.size) {
-                            if (uiState.messages.isNotEmpty()) {
-                                listState.animateScrollToItem(uiState.messages.size - 1)
+                            LazyColumn(
+                                state = listState,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                contentPadding = PaddingValues(8.dp)
+                            ) {
+                                items(uiState.messages, key = { it.id }) { message ->
+
+                                    MessageItemModern(
+                                        message = message,
+                                        isOwnMessage = message.user.id == ChatClient.instance().getCurrentUser()?.id,
+                                        onDeleteClick = {
+                                            // ask user to confirm deletion
+                                            messageToConfirmDelete = message
+                                        },
+                                        onReplyClick = { onReplyMessage(message) }
+                                    )
+                                }
+                            }
+
+                            LaunchedEffect(uiState.messages.size) {
+                                if (uiState.messages.isNotEmpty()) {
+                                    listState.animateScrollToItem(uiState.messages.size - 1)
+                                }
                             }
                         }
                     }
                 }
 
-                is MessageListUiState.Error -> Text(
-                    text = uiState.message,
-                    color = Color.Red,
-                    modifier = Modifier.align(Alignment.Center)
+                is MessageListUiState.Error -> Text(text = uiState.message, color = Color.Red, modifier = Modifier.align(Alignment.Center))
+            }
+
+            // Confirmation dialog for delete
+            messageToConfirmDelete?.let { msg ->
+                AlertDialog(
+                    onDismissRequest = { messageToConfirmDelete = null },
+                    title = { Text("Delete message") },
+                    text = { Text("Are you sure you want to delete this message? This action cannot be undone.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            // call delete immediately
+                            onDeleteMessage(msg)
+                            messageToConfirmDelete = null
+                        }) { Text("Delete") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { messageToConfirmDelete = null }) { Text("Cancel") }
+                    }
                 )
             }
         }
+    }
 
-        if (!canSendMessages) {
-            Surface(color = Color(0xFFFFF3CD), modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF856404))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Only the event organizer can post messages", color = Color(0xFF856404), fontSize = 14.sp)
-                }
-            }
-        } else {
-            MessageComposer(
-                messageText = messageText,
-                selectedImages = selectedImages,
-                onMessageTextChange = onMessageTextChange,
-                onSendMessage = onSendMessage,
-                onAddImages = { imagePicker.launch("image/*") },
-                onRemoveImage = onRemoveImage
-            )
-        }
+    if (showGroupDetails) {
+        GroupDetailsDialog(channelId = channelId, onDismiss = { showGroupDetails = false })
     }
 }
 
@@ -282,16 +287,28 @@ fun MessageComposer(
     onMessageTextChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onAddImages: () -> Unit,
-    onRemoveImage: (android.net.Uri) -> Unit
+    onRemoveImage: (android.net.Uri) -> Unit,
+    modifier: Modifier = Modifier,
+    replyPreview: Pair<String, String>? = null,
+    onCancelReply: () -> Unit
 ) {
     Surface(
         tonalElevation = 4.dp,
         shadowElevation = 8.dp,
         color = Color(0xFFF8F8F8),
         shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier
     ) {
         Column {
+            if (replyPreview != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(Color(0xFFF0F0F0)).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Replying to ${replyPreview.first}: ${replyPreview.second}", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onCancelReply) { Icon(Icons.Default.Close, contentDescription = "Cancel reply") }
+                }
+            }
             if (selectedImages.isNotEmpty()) {
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -315,9 +332,7 @@ fun MessageComposer(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onAddImages) {
-                    Icon(Icons.Default.AddCircle, contentDescription = "Attach", tint = Color(0xFF0F52BA))
-                }
+                IconButton(onClick = onAddImages) { Icon(Icons.Default.AddCircle, contentDescription = "Attach", tint = Color(0xFF0F52BA)) }
 
                 OutlinedTextField(
                     value = messageText,
@@ -396,45 +411,84 @@ fun GroupDetailsContent(channelId: String, onClose: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageItemModern(
     message: Message,
     isOwnMessage: Boolean,
-    onReactionClick: (String) -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onReplyClick: () -> Unit
 ) {
-    val alignment = if (isOwnMessage) Alignment.End else Alignment.Start
     val bubbleColor = if (isOwnMessage) Color(0xFF0F52BA) else Color(0xFFEFEFEF)
     val textColor = if (isOwnMessage) Color.White else Color.Black
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
 
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-        horizontalAlignment = alignment
-    ) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = bubbleColor),
-            modifier = Modifier.defaultMinSize(minWidth = 60.dp)
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // double-tap to reply; long-press to delete
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(message.id) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onReplyClick()
+                        },
+                        onLongPress = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onDeleteClick()
+                        }
+                    )
+                }
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = if (isOwnMessage) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Top
         ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = alignment) {
-                if (message.text.isNotEmpty()) {
-                    Text(message.text, color = textColor, fontSize = 15.sp)
-                }
-                message.attachments.forEach { attachment ->
-                    if (attachment.type == "image") {
-                        Spacer(Modifier.height(8.dp))
-                        AsyncImage(
-                            model = attachment.imageUrl ?: attachment.upload,
-                            contentDescription = null,
-                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).fillMaxWidth(0.7f)
-                        )
+            if (!isOwnMessage) {
+                AsyncImage(
+                    model = message.user.image,
+                    contentDescription = message.user.name,
+                    modifier = Modifier.size(36.dp).clip(CircleShape)
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = bubbleColor),
+                modifier = Modifier.defaultMinSize(minWidth = 60.dp)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    if (!message.text.isNullOrBlank()) {
+                        Text(message.text, color = textColor, fontSize = 15.sp)
                     }
+                    message.attachments.forEach { attachment ->
+                        if (attachment.type == "image") {
+                            Spacer(Modifier.height(8.dp))
+                            AsyncImage(
+                                model = attachment.imageUrl ?: attachment.upload,
+                                contentDescription = null,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).fillMaxWidth(0.7f)
+                            )
+                        }
+                    }
+                    Text(
+                        text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(message.createdAt ?: Date()),
+                        fontSize = 11.sp,
+                        color = if (isOwnMessage) Color.White.copy(alpha = 0.8f) else Color.DarkGray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
-                Text(
-                    text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(message.createdAt ?: Date()),
-                    fontSize = 11.sp,
-                    color = if (isOwnMessage) Color.White.copy(alpha = 0.8f) else Color.DarkGray,
-                    modifier = Modifier.padding(top = 4.dp)
+            }
+
+            if (isOwnMessage) {
+                Spacer(Modifier.width(8.dp))
+                AsyncImage(
+                    model = ChatClient.instance().getCurrentUser()?.image,
+                    contentDescription = ChatClient.instance().getCurrentUser()?.name,
+                    modifier = Modifier.size(36.dp).clip(CircleShape)
                 )
             }
         }

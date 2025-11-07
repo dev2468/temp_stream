@@ -530,3 +530,19 @@ app.listen(PORT, () => {
     console.log(`[diag] Firebase enabled: ${firebaseEnabled}${FIREBASE_PROJECT_ID ? ` (project: ${FIREBASE_PROJECT_ID})` : ''}`);
   } catch {}
 });
+
+// Admin delete message endpoint - deletes a message using server API key
+app.post('/messages/delete', verifyFirebaseIdToken, async (req, res) => {
+  try {
+    const { messageId } = req.body;
+    if (!messageId) return res.status(400).json({ error: 'Missing messageId' });
+
+    // Perform server-side delete as admin (serverClient has secret key)
+    await serverClient.deleteMessage(messageId);
+
+    res.json({ success: true, messageId });
+  } catch (e) {
+    console.error('Error deleting message:', e.message);
+    res.status(500).json({ error: 'Failed to delete message', detail: e.message });
+  }
+});
