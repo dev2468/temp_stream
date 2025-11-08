@@ -206,7 +206,7 @@ fun ChannelListScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text("Events", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                                        Text("Events", fontFamily = FontFamily(Font(resId = R.font.coda_extrabold)),fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
                                         // small icon button to go to event creation or full list if you want
                                         IconButton(onClick = onCreateEventClick) {
                                             Icon(Icons.Default.Add, contentDescription = "Create Event", tint = Color(0xFF0F52BA))
@@ -251,7 +251,7 @@ fun ChannelListScreen(
                         // --- Chats header ---
                         item {
                             Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                Text("Chats", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                                Text("Chats",fontFamily = FontFamily(Font(resId = R.font.coda_extrabold)), fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
                             }
                         }
 
@@ -286,8 +286,16 @@ fun ChannelListScreen(
 @Composable
 fun EventCardFromChannel(channel: Channel, onClick: () -> Unit) {
     val name = channel.name.ifEmpty { channel.id ?: "Event" }
-    val cover = channel.image ?: channel.extraData["coverImage"] as? String
+
+    val rawDescription = channel.extraData["event_description"] as? String
+    val description = rawDescription
+        ?.take(80)
+        ?.plus(if (rawDescription.length > 80) "..." else "")
+        ?: "No description available"
+
+    val members = channel.members.take(5)
     val eventDateMillis = (channel.extraData["event_date"] as? Number)?.toLong()
+
     val daysText = remember(eventDateMillis) {
         eventDateMillis?.let {
             val now = System.currentTimeMillis()
@@ -295,83 +303,125 @@ fun EventCardFromChannel(channel: Channel, onClick: () -> Unit) {
             val days = (diff.toDuration(DurationUnit.MILLISECONDS).toLong(DurationUnit.DAYS))
             when {
                 diff <= 0L -> "Today"
-                days <= 1L -> "${abs(days)} day"
+                days == 1L -> "Tomorrow"
                 else -> "${abs(days)} days"
             }
         } ?: ""
     }
 
+    // ✨ Sleek dark glass card
     Box(
         modifier = Modifier
             .width(280.dp)
             .height(160.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xFF4A4A4A).copy(alpha = 0.8f)) // dark glass tone like navbar
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)), RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
+            .padding(16.dp)
     ) {
-        if (!cover.isNullOrBlank()) {
-            AsyncImage(
-                model = cover,
-                contentDescription = name,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            // placeholder background if no cover
-            Box(modifier = Modifier.fillMaxSize().background(Color(0xFFeceff1)))
-        }
-
-        // gradient overlay for readability
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0x00000000), Color(0xAA000000)),
-                        startY = 60f
-                    )
-                )
-        )
-
-        // title and badge
         Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(12.dp)
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(6.dp))
-            if (daysText.isNotEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF0F52BA),
-                    tonalElevation = 2.dp
-                ) {
-                    Text(daysText, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color.White, fontSize = 12.sp)
+            // Header section
+            Column {
+                Text(
+                    text = name,
+                    color = Color(0xFF0F52BA), // blue title
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 18.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = description,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Footer section (avatars + badge)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Member avatars
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    members.forEachIndexed { index, member ->
+                        val offset = if (index == 0) 0.dp else (-12).dp
+                        Box(
+                            modifier = Modifier
+                                .offset(x = offset)
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = member.user.image ?: R.drawable.ic_person_placeholder,
+                                contentDescription = "Member",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                    }
+                }
+
+                // Days badge — now blue to match navbar
+                if (daysText.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF0F52BA).copy(alpha = 0.9f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                    ) {
+                        Text(
+                            text = daysText,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+
+
+
 @Composable
-fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
+fun TopBarTitle(
+    coda: FontFamily,
+    onAddClick: () -> Unit
+) {
+    val angkor = FontFamily(Font(resId = R.font.angkor_regular))
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White)
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        // Brand title
         Text(
-            text = "Chats",
-            fontFamily = coda,
+            text = "temp.",
+            fontFamily = angkor,
             fontWeight = FontWeight.ExtraBold,
             fontSize = 34.sp,
-            color = Color.Black
+            color = Color(0xFF0F52BA)
         )
 
+        // Friends button
         Surface(
             onClick = onAddClick,
             shape = RoundedCornerShape(50),
@@ -391,6 +441,7 @@ fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
                 Text(
                     text = "Friends",
                     color = Color.White,
+                    fontFamily = coda,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
@@ -398,6 +449,7 @@ fun TopBarTitle(coda: FontFamily, onAddClick: () -> Unit) {
         }
     }
 }
+
 
 @Composable
 fun FilterRow(filters: List<String>, selected: String, onSelected: (String) -> Unit) {
@@ -521,7 +573,7 @@ fun PillBottomNav(
     modifier: Modifier = Modifier,
     selectedTab: String,
     onTabSelected: (String) -> Unit,
-    onCenterClick: () -> Unit,
+    onCenterClick: () -> Unit, // still kept for compatibility but unused
     onProfileClick: () -> Unit
 ) {
     Box(
@@ -533,31 +585,23 @@ fun PillBottomNav(
         val density = LocalDensity.current
         var rowWidth by remember { mutableStateOf(0.dp) }
 
-        // Outer glassy container with your existing color scheme
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(68.dp)
                 .clip(RoundedCornerShape(50))
-                .background(
-                    Color(0xFF4A4A4A).copy(alpha = 0.75f) // Same dark tone, translucent for glass feel
-                )
-                .border(
-                    BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
-                )
+                .background(Color(0xFF4A4A4A).copy(alpha = 0.75f))
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)))
         ) {
             val xOffset by animateDpAsState(
-                targetValue = when (selectedTab) {
-                    "profile" -> (rowWidth / 3) * 2
-                    else -> 0.dp
-                },
+                targetValue = if (selectedTab == "profile") rowWidth / 2 else 0.dp,
                 animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
             )
 
-            // Highlight (blue moving pill)
+            // Blue moving highlight
             Box(
                 modifier = Modifier
-                    .width(rowWidth / 3)
+                    .width(rowWidth / 2)
                     .fillMaxHeight()
                     .offset(x = xOffset)
                     .padding(6.dp)
@@ -575,13 +619,11 @@ fun PillBottomNav(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .onGloballyPositioned {
-                        rowWidth = with(density) { it.size.width.toDp() }
-                    },
+                    .onGloballyPositioned { rowWidth = with(density) { it.size.width.toDp() } },
                 horizontalArrangement = Arrangement.SpaceAround,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 💬 Chats
+                // 💬 Chats tab
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -589,21 +631,10 @@ fun PillBottomNav(
                         .clickable { onTabSelected("channels") },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Chat, contentDescription = "Channels", tint = Color.White)
+                    Icon(Icons.Default.Chat, contentDescription = "Chats", tint = Color.White)
                 }
 
-                // 📅 Events (Center)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onCenterClick() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Event, contentDescription = "Events", tint = Color.White)
-                }
-
-                // 👤 Profile
+                // 👤 Profile tab
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -618,39 +649,53 @@ fun PillBottomNav(
     }
 }
 
+
+// Profile screen and supporting composables unchanged below
 // Profile screen and supporting composables unchanged below
 @OptIn(ExperimentalMaterial3Api::class)
+
 @Composable
 fun ProfileScreen(onBack: () -> Unit, onLogout: () -> Unit, onTabSelected: (String) -> Unit, onCreateEventClick: () -> Unit) {
     val auth = FirebaseAuth.getInstance()
     val user = auth.currentUser
 
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text("Profile", fontWeight = FontWeight.Bold, fontSize = 22.sp) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } }
+                title = { Text("Profile", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent
+                )
             )
         }
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF0F52BA),
+                            Color(0xFF3B74D3),
+                            Color(0xFFFFFFFF)
+                        )
+                    )
+                )
+                .padding(bottom = 100.dp)
         ) {
-            // Use the new and improved ProfileContent
-            BetterProfileContent(user = user, onLogout = onLogout)
+            BetterProfileContent(user = user, onLogout = onLogout, modifier = Modifier.padding(padding))
 
-            PillBottomNav(
-                modifier = Modifier.align(Alignment.BottomCenter),
-                selectedTab = "profile",
-                onTabSelected = onTabSelected,
-                onCenterClick = onCreateEventClick,
-                onProfileClick = { onTabSelected("profile") }
-            )
+
         }
     }
 }
+
 
 @Composable
 fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Modifier = Modifier) {
@@ -700,26 +745,23 @@ fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Mo
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .background(
-                brush = Brush.verticalGradient(
-                    listOf(Color(0xFF0F52BA), Color(0xFF1A73E8))
-                )
-            )
-            .padding(bottom = 100.dp),
+            .padding(horizontal = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
-        Spacer(Modifier.height(50.dp))
+        Spacer(Modifier.height(40.dp))
 
         // Profile Image
         Box(
             modifier = Modifier
                 .size(120.dp)
                 .clip(CircleShape)
-                .clickable { imagePicker.launch("image/*") }
+                .background(Color.White.copy(alpha = 0.25f))
+                .clickable { imagePicker.launch("image/*") },
+            contentAlignment = Alignment.Center
         ) {
             AsyncImage(
                 model = if (photoUrl.isNotBlank()) photoUrl else R.drawable.ic_person_placeholder,
@@ -740,14 +782,13 @@ fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Mo
 
         Spacer(Modifier.height(30.dp))
 
-
-        // 🌫️ Frosted Glass Card
+        // Frosted Info Card
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp))
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)), RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.White.copy(alpha = 0.15f))
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)))
                 .padding(20.dp)
         ) {
             ProfileGlassItem("Username", username ?: "Not set", Icons.Default.AccountCircle)
@@ -756,13 +797,13 @@ fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Mo
 
         Spacer(Modifier.height(22.dp))
 
-        // 🌫️ Frosted Action Card
+        // Frosted Action Card
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp))
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)), RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.White.copy(alpha = 0.15f))
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)))
                 .padding(20.dp)
         ) {
             ProfileGlassButton("Change Password", Icons.Default.LockReset) {
@@ -777,6 +818,7 @@ fun BetterProfileContent(user: FirebaseUser?, onLogout: () -> Unit, modifier: Mo
         Spacer(Modifier.height(120.dp))
     }
 }
+
 
 @Composable
 fun ProfileGlassItem(label: String, value: String, icon: ImageVector) {

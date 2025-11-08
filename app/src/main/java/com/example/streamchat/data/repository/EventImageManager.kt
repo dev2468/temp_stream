@@ -2,49 +2,28 @@ package com.example.streamchat.data.repository
 
 import android.net.Uri
 import android.util.Log
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.tasks.await
-import java.util.UUID
 
 object EventImageManager {
 
     private val storage = FirebaseStorage.getInstance()
-    private val firestore = FirebaseFirestore.getInstance()
-    private val imageCache = mutableMapOf<String, String?>()
+    private val cache = mutableMapOf<String, String?>()
 
     /**
-     * Uploads an event cover image to Firebase Storage and returns its public download URL.
-     * Optionally stores it in Firestore under /events/{eventId}/coverImageUrl.
+     * Upload event cover image to Firebase Storage as /event_covers/{eventId}.jpg
+     * Returns the download URL.
      */
-    suspend fun uploadEventCoverImage(
-        imageUri: Uri,
-        eventId: String? = null
-    ): String? {
+    suspend fun uploadEventCoverImage(imageUri: Uri, eventId: String): String? {
         return try {
-            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: "unknown_user"
-            val filename = "event_covers/${uid}_${UUID.randomUUID()}.jpg"
-
-            // Upload to Firebase Storage
-            val ref = storage.reference.child(filename)
+            val ref = storage.reference.child("event_covers/$eventId.jpg")
             ref.putFile(imageUri).await()
 
-            // Get download URL
-            val downloadUrl = ref.downloadUrl.await().toString()
-            Log.d("EventImageManager", "✅ Uploaded event cover: $downloadUrl")
+            val url = ref.downloadUrl.await().toString()
+            cache[eventId] = url
+            Log.d("EventImageManager", "✅ Uploaded event cover for $eventId: $url")
 
-            // Cache result
-            imageCache[filename] = downloadUrl
-
-            // Store in Firestore if eventId is provided
-            eventId?.let {
-                firestore.collection("events").document(it)
-                    .set(mapOf("coverImageUrl" to downloadUrl), com.google.firebase.firestore.SetOptions.merge())
-                    .await()
-            }
-
-            downloadUrl
+            url
         } catch (e: Exception) {
             Log.e("EventImageManager", "❌ Failed to upload image: ${e.message}")
             null
@@ -52,17 +31,19 @@ object EventImageManager {
     }
 
     /**
-     * Fetch cover image for an event (cached lookup).
+     * Get event cover image URL directly from Firebase Storage.
      */
     suspend fun getEventCoverImage(eventId: String): String? {
-        imageCache[eventId]?.let { return it }
+        cache[eventId]?.let { return it }
+
         return try {
-            val snapshot = firestore.collection("events").document(eventId).get().await()
-            val url = snapshot.getString("coverImageUrl")
-            imageCache[eventId] = url
+            val ref = storage.reference.child("event_covers/$eventId.jpg")
+            val url = ref.downloadUrl.await().toString()
+            cache[eventId] = url
+            Log.d("EventImageManager", "✅ Fetched event cover for $eventId: $url")
             url
         } catch (e: Exception) {
-            Log.e("EventImageManager", "❌ Error fetching cover image: ${e.message}")
+            Log.e("EventImageManager", "❌ Failed to fetch event cover for $eventId: ${e.message}")
             null
         }
     }

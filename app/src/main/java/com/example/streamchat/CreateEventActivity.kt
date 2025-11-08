@@ -6,6 +6,7 @@ import android.graphics.Shader
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -103,20 +104,15 @@ fun CreateEventScreen(
         imageUri = uri
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+
         // Blurred gradient background
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            Color(0xFF0F52BA),
-                            Color(0xFF3B74D3),
-                            Color(0xFFFFFFFF)
-                        )
+                        listOf(Color(0xFF0F52BA), Color(0xFF3B74D3), Color(0xFFFFFFFF))
                     )
                 )
                 .graphicsLayer {
@@ -148,6 +144,7 @@ fun CreateEventScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+
                 Spacer(Modifier.height(12.dp))
 
                 // Cover image
@@ -210,8 +207,9 @@ fun CreateEventScreen(
                     )
                 }
 
-                // Create button positioned below description
                 Spacer(Modifier.height(32.dp))
+
+                // ✅ Create Button Logic
                 CreateButton(isCreating = isCreating) {
                     if (eventName.isBlank()) {
                         Toast.makeText(context, "Event name is required", Toast.LENGTH_SHORT).show()
@@ -231,6 +229,7 @@ fun CreateEventScreen(
                                 isCreating = false
                                 return@launch
                             }
+
                             val idToken = user.getIdToken(false).await().token
                             if (idToken == null) {
                                 Toast.makeText(context, "Auth failed", Toast.LENGTH_SHORT).show()
@@ -238,23 +237,58 @@ fun CreateEventScreen(
                                 return@launch
                             }
 
-                            val uploadedUrl = imageUri?.let { EventImageManager.uploadEventCoverImage(it) }
-
+                            // Step 1️⃣ — Create event first to get eventId
                             val response = repository.createEvent(
                                 eventName = eventName.trim(),
                                 description = description.trim(),
                                 eventDate = selectedDate?.time,
-                                coverImage = uploadedUrl.orEmpty(),
+                                coverImage = "", // temporarily empty; we'll upload manually next
                                 firebaseIdToken = idToken
                             )
 
+                            if (!response.eventId.isNullOrBlank()) {
+                                val eventId = response.eventId
+                                var uploadedUrl: String? = null
 
-                            if (response.success) {
+                                // Upload image using eventId as filename
+                                imageUri?.let {
+                                    uploadedUrl = EventImageManager.uploadEventCoverImage(it, eventId)
+                                }
+
+                                // Now create the Stream channel with the uploaded URL
+                                val chatClient = io.getstream.chat.android.client.ChatClient.instance()
+                                val currentUser = FirebaseAuth.getInstance().currentUser
+                                val imageUrl = uploadedUrl.orEmpty()
+
+                                if (currentUser != null) {
+                                    val extraData: MutableMap<String, Any> = mutableMapOf(
+                                        "is_event_channel" to true,
+                                        "event_id" to eventId,
+                                        "description" to description
+                                    )
+                                    selectedDate?.time?.let { extraData["event_date"] = it }
+
+                                    chatClient.createChannel(
+                                        channelType = "messaging",
+                                        channelId = eventId,
+                                        memberIds = listOf(currentUser.uid),
+                                        extraData = extraData
+                                    ).enqueue { result ->
+                                        if (result.isSuccess) {
+                                            Log.d("CreateEvent", "✅ Stream channel created for $eventId with image $imageUrl")
+                                        } else {
+                                            Log.e("CreateEvent", "⚠️ Failed to create Stream channel: ${result.errorOrNull()?.message}")
+                                        }
+                                    }
+                                }
+
                                 Toast.makeText(context, "Event created successfully!", Toast.LENGTH_SHORT).show()
-                                onEventCreated(response.eventId.orEmpty(), response.joinLink)
+                                onEventCreated(eventId, response.joinLink)
                             } else {
-                                Toast.makeText(context, response.error ?: "Failed to create event", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Failed to create event.", Toast.LENGTH_SHORT).show()
                             }
+
+
                         } catch (e: Exception) {
                             Toast.makeText(context, e.message ?: "An error occurred", Toast.LENGTH_SHORT).show()
                         } finally {
@@ -269,7 +303,6 @@ fun CreateEventScreen(
     }
 }
 
-// Glass-style frosted box
 @Composable
 fun FrostedBox(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -282,7 +315,6 @@ fun FrostedBox(modifier: Modifier = Modifier, content: @Composable BoxScope.() -
     ) { content() }
 }
 
-// Small frosted buttons on image
 @Composable
 fun FrostedMiniButton(label: String, icon: ImageVector, onClick: () -> Unit) {
     Box(
@@ -302,7 +334,6 @@ fun FrostedMiniButton(label: String, icon: ImageVector, onClick: () -> Unit) {
     }
 }
 
-// Date-time picker
 @Composable
 fun DateTimePickerSection(selectedDate: Date?, onDateSelected: (Date) -> Unit) {
     val context = LocalContext.current
@@ -344,7 +375,6 @@ fun DateTimePickerSection(selectedDate: Date?, onDateSelected: (Date) -> Unit) {
     }
 }
 
-// Text field
 @Composable
 fun StyledTextField(value: String, onValueChange: (String) -> Unit, placeholder: String, textStyle: TextStyle = TextStyle(fontSize = 16.sp, color = textColor)) {
     BasicTextField(
@@ -360,7 +390,6 @@ fun StyledTextField(value: String, onValueChange: (String) -> Unit, placeholder:
     )
 }
 
-// Animated Create button
 @Composable
 fun CreateButton(isCreating: Boolean, onClick: () -> Unit) {
     val scale by animateFloatAsState(targetValue = if (isCreating) 0.96f else 1f, animationSpec = tween(150))
