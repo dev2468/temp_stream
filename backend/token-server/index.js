@@ -333,7 +333,22 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
     }
 
     // Add user as member (read-only by default)
-    await channel.addMembers([userId], { hide_history: false });
+    // Ensure the user exists on Stream (upsert) to avoid UpdateChannel errors when adding members
+    try {
+      if (req.firebaseUser && req.firebaseUser.id) {
+        await serverClient.upsertUser({ id: req.firebaseUser.id, ...(req.firebaseUser.name && { name: req.firebaseUser.name }), ...(req.firebaseUser.picture && { image: req.firebaseUser.picture }) });
+      }
+    } catch (e) {
+      console.warn('Warning: failed to upsert user before adding to channel:', e.message);
+      // continue — addMembers may still succeed if the user already exists
+    }
+
+    try {
+      await channel.addMembers([userId], { hide_history: false });
+    } catch (e) {
+      console.error('Stream API error adding member to channel:', e);
+      return res.status(500).json({ error: 'Failed to add user to event', detail: e.message || String(e) });
+    }
 
     res.json({
       success: true,
@@ -507,9 +522,10 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
     // Send bot reply to Stream Chat channel
     try {
       const channel = serverClient.channel(channelType, channelId);
+      // Use `user` object when using server-side auth to satisfy Stream API requirements
       await channel.sendMessage({
         text: botReply,
-        user_id: botUserId
+        user: { id: botUserId }
       });
     } catch (e) {
       console.error('Failed to send bot message to channel:', e.message);
