@@ -59,8 +59,9 @@ class EventJoinActivity : ComponentActivity() {
                     eventId = eventId,
                     repository = repository,
                     onJoinSuccess = { channelCid ->
-                        // Navigate to the event channel
-                        startActivityWithSlide(Intent(this, ChannelListActivity::class.java))
+                        // Navigate directly into the channel message list when join succeeds
+                        val intent = MessageListActivity.createIntent(this, channelCid ?: eventId, "")
+                        startActivityWithSlide(intent)
                         finishWithSlide()
                     },
                     onError = { message ->
@@ -87,23 +88,40 @@ fun EventJoinScreen(
     var isLoadingDetails by remember { mutableStateOf(true) }
     
     LaunchedEffect(eventId) {
-        // Load event details first
+        // Load event details first and attempt to auto-join if possible
         try {
             val firebaseUser = FirebaseAuth.getInstance().currentUser
             if (firebaseUser == null) {
                 onError("Not logged in")
                 return@LaunchedEffect
             }
-            
+
             val idToken = firebaseUser.getIdToken(false).await().token
             if (idToken == null) {
                 onError("Failed to get authentication token")
                 return@LaunchedEffect
             }
-            
+
             val response = repository.getEventDetails(eventId, idToken)
             if (response.success && response.event != null) {
                 eventDetails = response.event
+
+                // Attempt to auto-join immediately
+                isJoining = true
+                try {
+                    val joinResp = repository.joinEvent(eventId, idToken)
+                    if (joinResp.success) {
+                        // If server returned a channelCid, navigate to the channel directly
+                        onJoinSuccess(joinResp.channelCid ?: joinResp.channelId ?: eventId)
+                        return@LaunchedEffect
+                    } else {
+                        // Fall through to show manual join UI
+                    }
+                } catch (e: Exception) {
+                    // Auto-join failed; show UI so user can retry
+                } finally {
+                    isJoining = false
+                }
             } else {
                 onError("Event not found")
             }

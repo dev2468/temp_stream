@@ -275,9 +275,11 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: adminUserId, eventName' });
     }
 
-    // Generate unique event ID and join link
-  const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const joinLink = `temp://event/${eventId}`;
+    // Generate unique event ID and create a public HTTP join link that redirects into the app
+    const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Derive a base URL from an explicit PUBLIC_BASE_URL env var or the incoming request host
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const joinLink = `${baseUrl.replace(/\/$/, '')}/events/join/${eventId}`;
 
     // Create Stream channel with messaging type (using existing type)
     const channel = serverClient.channel('messaging', eventId, {
@@ -383,6 +385,60 @@ app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
   } catch (e) {
     console.error('Error fetching event:', e);
     res.status(500).json({ error: 'Failed to fetch event', detail: e.message });
+  }
+});
+
+// Public join page — clicking the public join link will attempt to open the native app via a deep link
+app.get('/events/join/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).send('Missing eventId');
+
+    // Deep link expected to be handled by the mobile app
+    const deepLink = `temp://event/${eventId}`;
+
+    // Optional Android intent fallback if the package name is provided in env
+    const androidPkg = process.env.ANDROID_PACKAGE_NAME || '';
+    const intentLink = androidPkg ? `intent://event/${eventId}#Intent;scheme=temp;package=${androidPkg};end` : '';
+
+    // Serve a small HTML page that tries to open the app via the deep link and falls back to the intent URL
+    const html = `<!doctype html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Join event</title>
+        <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:16px;} .center{max-width:520px;margin:auto;text-align:center;}</style>
+      </head>
+      <body>
+        <div class="center">
+          <h2>Opening event…</h2>
+          <p>If your app doesn't open automatically, tap the button below.</p>
+          <p><a id="open-btn" href="${deepLink}">Open in app</a></p>
+          <p id="web-fallback" style="display:none">If you don't have the app installed, open the app and paste this link: <code>${deepLink}</code></p>
+        </div>
+        <script>
+          (function(){
+            var deep = '${deepLink}';
+            var intent = '${intentLink}';
+            // Try to navigate to the deep link; after a short delay try the intent fallback (Android)
+            window.location = deep;
+            setTimeout(function(){
+              if (intent) {
+                window.location = intent;
+              } else {
+                document.getElementById('web-fallback').style.display = 'block';
+              }
+            }, 600);
+          })();
+        </script>
+      </body>
+      </html>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8').send(html);
+  } catch (e) {
+    console.error('Error serving join page:', e.message);
+    res.status(500).send('Failed to open join link');
   }
 });
 
