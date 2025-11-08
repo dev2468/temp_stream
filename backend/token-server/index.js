@@ -5,9 +5,9 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { StreamChat } from 'stream-chat';
 import admin from 'firebase-admin';
-
+ 
 dotenv.config();
-
+ 
 const {
   PORT = 8080,
   STREAM_KEY,
@@ -18,14 +18,14 @@ const {
   FIREBASE_PROJECT_ID,
   GEMINI_API_KEY
 } = process.env;
-
+ 
 if (!STREAM_KEY || !STREAM_SECRET) {
   console.error('Missing STREAM_KEY or STREAM_SECRET in .env');
   process.exit(1);
 }
-
+ 
 const serverClient = StreamChat.getInstance(STREAM_KEY, STREAM_SECRET);
-
+ 
 // Gemini API configuration (using REST API directly for better compatibility)
 const GEMINI_API_AVAILABLE = !!GEMINI_API_KEY;
 if (GEMINI_API_AVAILABLE) {
@@ -33,14 +33,14 @@ if (GEMINI_API_AVAILABLE) {
 } else {
   console.warn('Gemini API key not set, bot features will be disabled');
 }
-
+ 
 // Initialize Firestore for bot memory (only if Firebase is enabled)
 let db = null;
-
+ 
 const app = express();
 app.use(helmet());
 app.use(express.json());
-
+ 
 // CORS — allow local Android emulator and optional web origins
 const defaultOrigins = [
   'http://localhost:3000',
@@ -57,11 +57,11 @@ app.use(cors({
   },
   credentials: false
 }));
-
+ 
 // Basic rate limiting
 const limiter = rateLimit({ windowMs: 60 * 1000, limit: 120 });
 app.use(limiter);
-
+ 
 // Optional shared-secret auth for dev/prod hardening
 if (TOKEN_SERVER_SECRET) {
   app.use((req, res, next) => {
@@ -72,7 +72,7 @@ if (TOKEN_SERVER_SECRET) {
     next();
   });
 }
-
+ 
 // Firebase ID token verification (conditional). Enabled when credentials are provided.
 let firebaseEnabled = false;
 try {
@@ -91,16 +91,16 @@ try {
 } catch (e) {
   console.warn('Failed to initialize Firebase Admin; Firebase auth disabled:', e.message);
 }
-
+ 
 // Helper function to call Gemini REST API directly
 async function callGeminiAPI(prompt, conversationHistory = []) {
   if (!GEMINI_API_KEY) {
     throw new Error('Gemini API key not configured');
   }
-
+ 
   // Build the contents array with conversation history
   const contents = [];
-  
+ 
   // Add system prompt
   contents.push({
     role: 'user',
@@ -110,7 +110,7 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
     role: 'model',
     parts: [{ text: 'Understood! I\'m here to help you learn. Ask me anything!' }]
   });
-  
+ 
   // Add conversation history (last 10 messages)
   const recentHistory = conversationHistory.slice(-10);
   for (const msg of recentHistory) {
@@ -119,13 +119,13 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
       parts: [{ text: msg.content }]
     });
   }
-  
+ 
   // Add current prompt
   contents.push({
     role: 'user',
     parts: [{ text: prompt }]
   });
-
+ 
   // Call Gemini REST API - using gemini-2.0-flash (stable, fast model)
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -141,29 +141,29 @@ async function callGeminiAPI(prompt, conversationHistory = []) {
       })
     }
   );
-
+ 
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Gemini API error: ${response.status} ${errorText}`);
   }
-
+ 
   const data = await response.json();
   const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
+ 
   if (!reply) {
     throw new Error('No response from Gemini API');
   }
-
+ 
   return reply;
 }
-
+ 
 async function verifyFirebaseIdToken(req, res, next) {
   if (!firebaseEnabled) return next();
   try {
     const auth = req.get('Authorization') || '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (!token) return res.status(401).json({ error: 'Missing Authorization Bearer token' });
-
+ 
     const decoded = await admin.auth().verifyIdToken(token, false); // don't check revocation for dev
     console.log('Firebase token verified for uid:', decoded.uid);
     req.firebaseUser = {
@@ -180,7 +180,7 @@ async function verifyFirebaseIdToken(req, res, next) {
     return res.status(401).json({ error: 'Invalid token', ...(details && { detail: details }) });
   }
 }
-
+ 
 app.get('/health', (_req, res) => {
   // Expose only safe config for quick diagnostics. STREAM_KEY is public (also shipped in client apps).
   res.json({
@@ -191,24 +191,24 @@ app.get('/health', (_req, res) => {
     gemini_enabled: GEMINI_API_AVAILABLE
   });
 });
-
+ 
 // Test endpoint to list available Gemini models
 app.get('/gemini/models', async (_req, res) => {
   if (!GEMINI_API_KEY) {
     return res.status(503).json({ error: 'Gemini API key not configured' });
   }
-
+ 
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`,
       { method: 'GET', headers: { 'Content-Type': 'application/json' } }
     );
-
+ 
     if (!response.ok) {
       const errorText = await response.text();
       return res.status(response.status).json({ error: errorText });
     }
-
+ 
     const data = await response.json();
     // Filter only models that support generateContent
     const contentModels = data.models?.filter(m =>
@@ -219,7 +219,7 @@ app.get('/gemini/models', async (_req, res) => {
       description: m.description,
       methods: m.supportedGenerationMethods
     })) || [];
-
+ 
     res.json({
       available_models: contentModels,
       count: contentModels.length
@@ -228,7 +228,7 @@ app.get('/gemini/models', async (_req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
+ 
 // Secondary health endpoint with a different path to avoid any caches and to help identify new deployments
 app.get('/healthz', (_req, res) => {
   res.json({
@@ -239,7 +239,7 @@ app.get('/healthz', (_req, res) => {
     started_at: new Date().toISOString()
   });
 });
-
+ 
 // Issue a token and upsert the user so channel creation works
 // GET /token?user_id=john&name=John%20Doe&image=https://...
 // When Firebase is configured, derives user_id from the verified ID token's uid
@@ -248,13 +248,13 @@ app.get('/token', verifyFirebaseIdToken, async (req, res) => {
     const derivedId = req.firebaseUser?.id;
     const userId = String((derivedId || req.query.user_id || '')).trim();
     if (!userId) return res.status(400).json({ error: 'Missing user_id' });
-
+ 
     const name = String(req.query.name || req.firebaseUser?.name || '').trim();
     const image = String(req.query.image || req.firebaseUser?.picture || '').trim();
-
+ 
     // Upsert user metadata (safe to call repeatedly)
     await serverClient.upsertUser({ id: userId, ...(name && { name }), ...(image && { image }) });
-
+ 
     const token = serverClient.createToken(userId);
     res.json({ token });
   } catch (e) {
@@ -262,23 +262,25 @@ app.get('/token', verifyFirebaseIdToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to issue token' });
   }
 });
-
+ 
 // ========== EVENT ENDPOINTS ==========
-
+ 
 // Create a new event
 app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventName, description, eventDate, coverImage } = req.body;
     const adminUserId = req.firebaseUser?.id || req.body.adminUserId;
-
+ 
     if (!adminUserId || !eventName) {
       return res.status(400).json({ error: 'Missing required fields: adminUserId, eventName' });
     }
-
-    // Generate unique event ID and join link
-  const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const joinLink = `temp://event/${eventId}`;
-
+ 
+    // Generate unique event ID and create a public HTTP join link that redirects into the app
+    const eventId = `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Derive a base URL from an explicit PUBLIC_BASE_URL env var or the incoming request host
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const joinLink = `${baseUrl.replace(/\/$/, '')}/events/join/${eventId}`;
+ 
     // Create Stream channel with messaging type (using existing type)
     const channel = serverClient.channel('messaging', eventId, {
       name: eventName,
@@ -290,14 +292,14 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
       created_by: { id: adminUserId },
       is_event_channel: true, // Mark as event channel
     });
-
+ 
     // Create channel and add admin as member first
     await channel.create();
     await channel.addMembers([adminUserId]);
-
+ 
     // Then make admin a moderator (for permissions)
     await channel.addModerators([adminUserId]);
-
+ 
     res.json({
       success: true,
       eventId,
@@ -310,29 +312,48 @@ app.post('/events/create', verifyFirebaseIdToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to create event', detail: e.message });
   }
 });
-
+ 
 // Join an event via link
 app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventId } = req.body;
     const userId = req.firebaseUser?.id || req.body.userId;
-
+ 
     if (!eventId || !userId) {
       return res.status(400).json({ error: 'Missing eventId or userId' });
     }
-
+ 
     const channel = serverClient.channel('messaging', eventId);
-
+ 
     // Check if channel exists
     try {
       await channel.watch();
     } catch (e) {
       return res.status(404).json({ error: 'Event not found' });
     }
-
+ 
     // Add user as member (read-only by default)
-    await channel.addMembers([userId], { hide_history: false });
-
+    // Ensure the user exists on Stream (upsert) to avoid UpdateChannel errors when adding members
+    try {
+      if (req.firebaseUser && req.firebaseUser.id) {
+        await serverClient.upsertUser({ id: req.firebaseUser.id, ...(req.firebaseUser.name && { name: req.firebaseUser.name }), ...(req.firebaseUser.picture && { image: req.firebaseUser.picture }) });
+      }
+    } catch (e) {
+      console.warn('Warning: failed to upsert user before adding to channel:', e.message);
+      // continue — addMembers may still succeed if the user already exists
+    }
+ 
+    try {
+      // Call addMembers without a "message" payload. Passing an object as the second
+      // argument is treated as a message by the SDK and requires message.user or message.user_id
+      // when using server-side auth. Omitting the second arg avoids sending a system message
+      // and prevents the 400 error.
+      await channel.addMembers([userId]);
+    } catch (e) {
+      console.error('Stream API error adding member to channel:', e);
+      return res.status(500).json({ error: 'Failed to add user to event', detail: e.message || String(e) });
+    }
+ 
     res.json({
       success: true,
       channelId: channel.id,
@@ -343,29 +364,29 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to join event', detail: e.message });
   }
 });
-
+ 
 // Get event details
 app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { eventId } = req.params;
-
+ 
     // Use queryChannels for a robust lookup by ID and type
     const channels = await serverClient.queryChannels(
       { type: 'messaging', id: { $eq: eventId } },
       [],
       { state: true, watch: false, limit: 1 }
     );
-
+ 
     if (!channels || channels.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
-
+ 
     const ch = channels[0];
     const data = ch.data || {};
     const memberCount = typeof ch.member_count === 'number'
       ? ch.member_count
       : Array.isArray(ch.members) ? ch.members.length : 0;
-
+ 
     res.json({
       success: true,
       event: {
@@ -385,23 +406,77 @@ app.get('/events/:eventId', verifyFirebaseIdToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch event', detail: e.message });
   }
 });
-
+ 
+// Public join page — clicking the public join link will attempt to open the native app via a deep link
+app.get('/events/join/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).send('Missing eventId');
+ 
+    // Deep link expected to be handled by the mobile app
+    const deepLink = `temp://event/${eventId}`;
+ 
+    // Optional Android intent fallback if the package name is provided in env
+    const androidPkg = process.env.ANDROID_PACKAGE_NAME || '';
+    const intentLink = androidPkg ? `intent://event/${eventId}#Intent;scheme=temp;package=${androidPkg};end` : '';
+ 
+    // Serve a small HTML page that tries to open the app via the deep link and falls back to the intent URL
+    const html = `<!doctype html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Join event</title>
+        <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:16px;} .center{max-width:520px;margin:auto;text-align:center;}</style>
+      </head>
+      <body>
+        <div class="center">
+          <h2>Opening event…</h2>
+          <p>If your app doesn't open automatically, tap the button below.</p>
+          <p><a id="open-btn" href="${deepLink}">Open in app</a></p>
+          <p id="web-fallback" style="display:none">If you don't have the app installed, open the app and paste this link: <code>${deepLink}</code></p>
+        </div>
+        <script>
+          (function(){
+            var deep = '${deepLink}';
+            var intent = '${intentLink}';
+            // Try to navigate to the deep link; after a short delay try the intent fallback (Android)
+            window.location = deep;
+            setTimeout(function(){
+              if (intent) {
+                window.location = intent;
+              } else {
+                document.getElementById('web-fallback').style.display = 'block';
+              }
+            }, 600);
+          })();
+        </script>
+      </body>
+      </html>`;
+ 
+    res.set('Content-Type', 'text/html; charset=utf-8').send(html);
+  } catch (e) {
+    console.error('Error serving join page:', e.message);
+    res.status(500).send('Failed to open join link');
+  }
+});
+ 
 // ========== AI CHATBOT ENDPOINT ==========
-
+ 
 // Chat with AI bot (mention-based: @bot <message>)
 app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { message, channelId, channelType = 'messaging' } = req.body;
     const userId = req.firebaseUser?.id || req.body.userId;
-
+ 
     if (!userId || !message || !channelId) {
       return res.status(400).json({ error: 'Missing required fields: userId, message, channelId' });
     }
-
+ 
     if (!GEMINI_API_AVAILABLE) {
       return res.status(503).json({ error: 'AI bot is not configured. Please set GEMINI_API_KEY in environment.' });
     }
-
+ 
     // Get or create bot user
     const botUserId = 'ai-assistant';
     try {
@@ -414,7 +489,7 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
     } catch (e) {
       console.warn('Bot user upsert warning:', e.message);
     }
-
+ 
     // Fetch conversation history from Firestore (if available)
     let conversationHistory = [];
     if (db) {
@@ -428,38 +503,39 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
         console.warn('Failed to fetch conversation history:', e.message);
       }
     }
-
+ 
     // Call Gemini API using REST
     const botReply = await callGeminiAPI(message, conversationHistory);
-
+ 
     // Save updated conversation history to Firestore
     if (db) {
       try {
         conversationHistory.push({ role: 'user', content: message });
         conversationHistory.push({ role: 'assistant', content: botReply });
-
+ 
         // Keep only last 20 messages to prevent unlimited growth
         const trimmedHistory = conversationHistory.slice(-20);
-
+ 
         const historyRef = db.collection('chat_memory').doc(userId);
         await historyRef.set({ history: trimmedHistory, updatedAt: new Date() });
       } catch (e) {
         console.warn('Failed to save conversation history:', e.message);
       }
     }
-
+ 
     // Send bot reply to Stream Chat channel
     try {
       const channel = serverClient.channel(channelType, channelId);
+      // Use `user` object when using server-side auth to satisfy Stream API requirements
       await channel.sendMessage({
         text: botReply,
-        user_id: botUserId
+        user: { id: botUserId }
       });
     } catch (e) {
       console.error('Failed to send bot message to channel:', e.message);
       // Still return the reply even if posting to channel fails
     }
-
+ 
     res.json({
       success: true,
       reply: botReply
@@ -469,24 +545,24 @@ app.post('/chat/bot', verifyFirebaseIdToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to process bot chat', detail: e.message });
   }
 });
-
+ 
 // ========== MESSAGE VALIDATION WEBHOOK ==========
-
+ 
 // Webhook to validate messages (called before message is sent)
 app.post('/webhook/message', async (req, res) => {
   try {
     const { type, message, channel_type, channel_id } = req.body;
-
+ 
     // Only validate for event channels (check custom flag)
     if (channel_type !== 'messaging') {
       return res.status(200).json({ message: 'allowed' });
     }
-
+ 
     // Only validate on message.new events
     if (type !== 'message.new') {
       return res.status(200).json({ message: 'allowed' });
     }
-
+ 
     const senderId = message?.user?.id;
     if (!senderId) {
       return res.status(403).json({
@@ -494,18 +570,18 @@ app.post('/webhook/message', async (req, res) => {
         message: 'rejected'
       });
     }
-
+ 
     // Get channel to check if it's an event channel and check admin
     const channel = serverClient.channel('messaging', channel_id);
     const channelData = await channel.query();
-
+ 
     // Only validate if this is an event channel
     if (!channelData.channel.data.is_event_channel) {
       return res.status(200).json({ message: 'allowed' });
     }
-
+ 
     const eventAdmin = channelData.channel.data.event_admin;
-
+ 
     // Check if sender is the admin
     if (senderId !== eventAdmin) {
       return res.status(403).json({
@@ -513,7 +589,7 @@ app.post('/webhook/message', async (req, res) => {
         message: 'rejected'
       });
     }
-
+ 
     res.status(200).json({ message: 'allowed' });
   } catch (e) {
     console.error('Webhook error:', e);
@@ -521,7 +597,7 @@ app.post('/webhook/message', async (req, res) => {
     res.status(200).json({ message: 'allowed' });
   }
 });
-
+ 
 app.listen(PORT, () => {
   console.log(`Token server listening on http://localhost:${PORT}`);
   try {
@@ -530,16 +606,16 @@ app.listen(PORT, () => {
     console.log(`[diag] Firebase enabled: ${firebaseEnabled}${FIREBASE_PROJECT_ID ? ` (project: ${FIREBASE_PROJECT_ID})` : ''}`);
   } catch {}
 });
-
+ 
 // Admin delete message endpoint - deletes a message using server API key
 app.post('/messages/delete', verifyFirebaseIdToken, async (req, res) => {
   try {
     const { messageId } = req.body;
     if (!messageId) return res.status(400).json({ error: 'Missing messageId' });
-
+ 
     // Perform server-side delete as admin (serverClient has secret key)
     await serverClient.deleteMessage(messageId);
-
+ 
     res.json({ success: true, messageId });
   } catch (e) {
     console.error('Error deleting message:', e.message);
