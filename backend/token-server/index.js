@@ -344,7 +344,11 @@ app.post('/events/join', verifyFirebaseIdToken, async (req, res) => {
     }
 
     try {
-      await channel.addMembers([userId], { hide_history: false });
+      // Call addMembers without a "message" payload. Passing an object as the second
+      // argument is treated as a message by the SDK and requires message.user or message.user_id
+      // when using server-side auth. Omitting the second arg avoids sending a system message
+      // and prevents the 400 error.
+      await channel.addMembers([userId]);
     } catch (e) {
       console.error('Stream API error adding member to channel:', e);
       return res.status(500).json({ error: 'Failed to add user to event', detail: e.message || String(e) });
